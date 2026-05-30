@@ -1,0 +1,211 @@
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Source+Sans+3:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Forest green palette */
+    --background: 45 25% 97%;
+    --foreground: 150 30% 15%;
+
+    --card: 45 30% 99%;
+    --card-foreground: 150 30% 15%;
+
+    --popover: 45 30% 99%;
+    --popover-foreground: 150 30% 15%;
+
+    /* Deep forest green */
+    --primary: 152 45% 22%;
+    --primary-foreground: 45 30% 98%;
+
+    /* Warm sand */
+    --secondary: 38 35% 92%;
+    --secondary-foreground: 150 30% 18%;
+
+    /* Muted sage */
+    --muted: 140 15% 90%;
+    --muted-foreground: 150 15% 40%;
+
+    /* Amber accent */
+    --accent: 38 85% 50%;
+    --accent-foreground: 150 30% 12%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 140 20% 88%;
+    --input: 140 20% 88%;
+    --ring: 152 45% 22%;
+
+    --radius: 0.625rem;
+
+    /* Custom tokens */
+    --gradient-hero: linear-gradient(135deg, hsl(152 45% 22%) 0%, hsl(160 40% 28%) 50%, hsl(38 85% 50% / 0.8) 100%);
+    --gradient-card: linear-gradient(180deg, hsl(45 30% 99%) 0%, hsl(140 15% 96%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(38 85% 50%) 0%, hsl(32 90% 45%) 100%);
+    --gradient-nature: linear-gradient(180deg, hsl(152 45% 22% / 0.95) 0%, hsl(160 40% 15% / 0.9) 100%);
+    
+    --shadow-soft: 0 4px 20px -4px hsl(150 30% 20% / 0.1);
+    --shadow-card: 0 8px 32px -8px hsl(150 30% 20% / 0.12);
+    --shadow-elevated: 0 20px 60px -15px hsl(150 30% 20% / 0.2);
+    --shadow-glow: 0 0 40px hsl(38 85% 50% / 0.3);
+
+    --font-display: 'Playfair Display', Georgia, serif;
+    --font-body: 'Source Sans 3', system-ui, sans-serif;
+
+    --sidebar-background: 45 25% 97%;
+    --sidebar-foreground: 150 30% 15%;
+    --sidebar-primary: 152 45% 22%;
+    --sidebar-primary-foreground: 45 30% 98%;
+    --sidebar-accent: 140 15% 90%;
+    --sidebar-accent-foreground: 150 30% 15%;
+    --sidebar-border: 140 20% 88%;
+    --sidebar-ring: 152 45% 22%;
+  }
+
+  .dark {
+    --background: 150 25% 8%;
+    --foreground: 45 25% 95%;
+
+    --card: 150 20% 12%;
+    --card-foreground: 45 25% 95%;
+
+    --popover: 150 20% 12%;
+    --popover-foreground: 45 25% 95%;
+
+    --primary: 152 40% 45%;
+    --primary-foreground: 150 30% 8%;
+
+    --secondary: 150 15% 18%;
+    --secondary-foreground: 45 25% 92%;
+
+    --muted: 150 15% 20%;
+    --muted-foreground: 140 10% 60%;
+
+    --accent: 38 80% 55%;
+    --accent-foreground: 150 30% 8%;
+
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 150 15% 22%;
+    --input: 150 15% 22%;
+    --ring: 152 40% 45%;
+
+    --sidebar-background: 150 25% 8%;
+    --sidebar-foreground: 45 25% 95%;
+    --sidebar-primary: 152 40% 45%;
+    --sidebar-primary-foreground: 150 30% 8%;
+    --sidebar-accent: 150 15% 20%;
+    --sidebar-accent-foreground: 45 25% 92%;
+    --sidebar-border: 150 15% 22%;
+    --sidebar-ring: 152 40% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display;
+  }
+}
+
+@layer components {
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: var(--gradient-hero);
+  }
+
+  .card-nature {
+    background: var(--gradient-card);
+    box-shadow: var(--shadow-card);
+  }
+
+  .btn-glow {
+    box-shadow: var(--shadow-glow);
+  }
+}
+
+@layer utilities {
+  .animate-fade-up {
+    animation: fadeUp 0.6s ease-out forwards;
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-out forwards;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.4s ease-out forwards;
+  }
+
+  .animate-slide-in-right {
+    animation: slideInRight 0.5s ease-out forwards;
+  }
+
+  .delay-100 { animation-delay: 100ms; }
+  .delay-200 { animation-delay: 200ms; }
+  .delay-300 { animation-delay: 300ms; }
+  .delay-400 { animation-delay: 400ms; }
+  .delay-500 { animation-delay: 500ms; }
+
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(30px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes slideInRight {
+    from {
+      opacity: 0;
+      transform: translateX(30px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+}
