@@ -5,7 +5,7 @@ import path from "path";
 const isNetlify = process.env.NETLIFY === "true";
 
 export default defineConfig(() => ({
-  base: isNetlify ? "/" : "/ABCOSSA/",
+  // base: isNetlify ? "/" : "/ABCOSSA/",
   build: {
     // outDir: isNetlify ? "dist" : "docs",
     outDir: "dist",
