@@ -7,7 +7,8 @@ const isNetlify = process.env.NETLIFY === "true";
 export default defineConfig(() => ({
   base: isNetlify ? "/" : "/ABCOSSA/",
   build: {
-    outDir: isNetlify ? "dist" : "docs",
+    // outDir: isNetlify ? "dist" : "docs",
+    outDir: "dist",
   },
   server: {
     host: "::",
