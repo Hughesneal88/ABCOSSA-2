@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { ArrowRight, Leaf, Calendar, Lightbulb, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EVENT_PROPOSAL_URL } from "@/config/site";
-import { usePublicBlogPosts, useUpcomingPublicEvents } from "@/hooks/useSupabasePublic";
+import { usePublicBlogPosts, useUpcomingPublicEvents, useSiteImages } from "@/hooks/useSupabasePublic";
 import { isSupabaseConfigured } from "@/integrations/supabase/client";
 import heroImage from "@/assets/hero-sustaining-ecosystem.png";
 import cardInternships from "@/assets/card-courtyard-plants.png";
@@ -18,38 +18,6 @@ import galleryNew1 from "@/assets/WhatsApp Image 2026-05-05 at 5.55.48 PM (2).jp
 import galleryNew2 from "@/assets/WhatsApp Image 2026-05-05 at 5.55.49 PM (2).jpeg";
 import galleryNew3 from "@/assets/WhatsApp Image 2026-05-05 at 5.55.49 PM (4).jpeg";
 
-const programs = [
-  {
-    image: cardInternships,
-    title: "Internships & placements",
-    description: "Field, lab, and organizational opportunities curated for ABCOSSA members.",
-    link: "/internships",
-  },
-  {
-    image: cardEvents,
-    title: "Events & workshops",
-    description: "What’s on—via our shared calendar for talks, field days, and department sessions.",
-    link: "/events",
-  },
-  {
-    image: cardCommunity,
-    title: "Blog & Articles",
-    description: "Stories, research highlights, and updates written by ABCOSSA members and the executive.",
-    link: "/news",
-  },
-];
-
-const campusGallery = [
-  { src: gallerySnakePlant, alt: "Courtyard with potted plants outside the department" },
-  { src: galleryNew1, alt: "ABCOSSA members in the field" },
-  { src: campusEntrance, alt: "Department building framed by trees and the campus entrance" },
-  { src: galleryNew3, alt: "ABCOSSA activity" },
-  { src: galleryApproach, alt: "Walkway toward the department with sunlight through the canopy" },
-  { src: abcossaIllustration, alt: "ABCOSSA character illustration" },
-  { src: galleryPalm, alt: "Shaded courtyard with palms and colonnade" },
-  { src: galleryNew2, alt: "ABCOSSA members during an event" },
-  { src: galleryEntranceAlt, alt: "Campus approach with greenery and red-tiled roof" },
-];
 
 
 
@@ -60,7 +28,42 @@ function formatDate(iso: string) {
 export default function HomePage() {
   const { data: blogs = [], isLoading: blogsLoading } = usePublicBlogPosts();
   const { data: events = [], isLoading: eventsLoading } = useUpcomingPublicEvents(3);
+  const { data: siteImages = {} } = useSiteImages();
+  const si = (key: string, fallback: string) => siteImages[key] ?? fallback;
   const feedLoading = blogsLoading || eventsLoading;
+
+  const programs = [
+    {
+      image: si("card_internships", cardInternships),
+      title: "Internships & placements",
+      description: "Field, lab, and organizational opportunities curated for ABCOSSA members.",
+      link: "/internships",
+    },
+    {
+      image: si("card_events", cardEvents),
+      title: "Events & workshops",
+      description: "What's on—via our shared calendar for talks, field days, and department sessions.",
+      link: "/events",
+    },
+    {
+      image: si("card_community", cardCommunity),
+      title: "Blog & Articles",
+      description: "Stories, research highlights, and updates written by ABCOSSA members and the executive.",
+      link: "/news",
+    },
+  ];
+
+  const campusGallery = [
+    { src: si("gallery_snake_plant",     gallerySnakePlant),    alt: "Courtyard with potted plants outside the department" },
+    { src: si("gallery_members_1",       galleryNew1),          alt: "ABCOSSA members in the field" },
+    { src: si("gallery_campus_entrance", campusEntrance),       alt: "Department building framed by trees and the campus entrance" },
+    { src: si("gallery_activity",        galleryNew3),          alt: "ABCOSSA activity" },
+    { src: si("gallery_walkway",         galleryApproach),      alt: "Walkway toward the department with sunlight through the canopy" },
+    { src: si("gallery_illustration",    abcossaIllustration),  alt: "ABCOSSA character illustration" },
+    { src: si("gallery_palm",            galleryPalm),          alt: "Shaded courtyard with palms and colonnade" },
+    { src: si("gallery_members_2",       galleryNew2),          alt: "ABCOSSA members during an event" },
+    { src: si("gallery_entrance_alt",    galleryEntranceAlt),   alt: "Campus approach with greenery and red-tiled roof" },
+  ];
 
   type FeedItem = { key: string; category: string; date: string; title: string; excerpt: string; href: string };
 
@@ -93,7 +96,7 @@ export default function HomePage() {
       <section className="relative min-h-[90vh] flex items-center">
         <div className="absolute inset-0">
           <img
-            src={heroImage}
+            src={si("hero", heroImage)}
             alt="University department building and lush trees on campus—sustaining the ecosystem"
             className="w-full h-full object-cover object-center"
           />

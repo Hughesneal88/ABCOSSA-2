@@ -290,6 +290,22 @@ export default function ResearchPage() {
                         {lecturer.email}
                       </a>
                     )}
+                    {lecturer.links && lecturer.links.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-1.5">
+                        {lecturer.links.map((link) => (
+                          <a
+                            key={link.url}
+                            href={link.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            {link.label}
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

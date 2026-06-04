@@ -146,6 +146,8 @@ export function useSiteSetting(key: string) {
   });
 }
 
+export type LecturerLink = { label: string; url: string };
+
 export type PublicLecturer = {
   id: string;
   name: string;
@@ -154,6 +156,7 @@ export type PublicLecturer = {
   email: string | null;
   image_url: string | null;
   display_order: number;
+  links: LecturerLink[];
 };
 
 export function useLecturers() {
@@ -163,7 +166,7 @@ export function useLecturers() {
       if (!supabase) return [];
       const { data, error } = await supabase
         .from("lecturers")
-        .select("id,name,bio,research_interests,email,image_url,display_order")
+        .select("id,name,bio,research_interests,email,image_url,display_order,links")
         .eq("is_active", true)
         .order("display_order", { ascending: true });
       if (error) throw error;
@@ -199,6 +202,25 @@ export function usePublishedResearchWorks() {
         .order("year", { ascending: false });
       if (error) throw error;
       return (data as PublicResearchWork[]) ?? [];
+    },
+    enabled: isSupabaseConfigured,
+  });
+}
+
+export type SiteImageMap = Record<string, string>;
+
+export function useSiteImages() {
+  return useQuery({
+    queryKey: ["site-images"],
+    queryFn: async (): Promise<SiteImageMap> => {
+      if (!supabase) return {};
+      const { data, error } = await supabase
+        .from("site_images")
+        .select("key,url");
+      if (error) throw error;
+      return Object.fromEntries(
+        (data as { key: string; url: string }[]).map((r) => [r.key, r.url]),
+      );
     },
     enabled: isSupabaseConfigured,
   });

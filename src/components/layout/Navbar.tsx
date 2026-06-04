@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RESOURCES_TELEGRAM_URL } from "@/config/site";
+import { useSiteImages } from "@/hooks/useSupabasePublic";
 import abcossaLogo from "@/assets/WhatsApp Image 2026-05-05 at 5.23.56 PM.jpeg";
 
 type NavItem =
@@ -28,6 +29,8 @@ function isActive(pathname: string, item: NavItem) {
 export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
+  const { data: siteImages = {} } = useSiteImages();
+  const logoSrc = siteImages["navbar_logo"] ?? abcossaLogo;
 
   const linkClass = (item: NavItem) =>
     cn(
@@ -51,7 +54,7 @@ export function Navbar() {
         <div className="flex h-20 items-center justify-between">
           <Link to="/" className="flex items-center gap-3">
             <img
-              src={abcossaLogo}
+              src={logoSrc}
               alt="ABCOSSA logo"
               className="w-12 h-12 rounded-full object-cover"
             />

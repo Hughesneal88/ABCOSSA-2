@@ -15,6 +15,7 @@ import {
   BookOpen,
   Check,
   X as XIcon,
+  Image,
 } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -427,6 +428,10 @@ export default function AdminContentPage() {
               <Settings className="w-3.5 h-3.5" />
               Settings
             </TabsTrigger>
+            <TabsTrigger value="images" className="gap-1.5">
+              <Image className="w-3.5 h-3.5" />
+              Images
+            </TabsTrigger>
             <TabsTrigger value="research" className="gap-1.5">
               <BookOpen className="w-3.5 h-3.5" />
               Research
@@ -458,6 +463,9 @@ export default function AdminContentPage() {
           </TabsContent>
           <TabsContent value="settings">
             <SettingsAdminPanel />
+          </TabsContent>
+          <TabsContent value="images">
+            <SiteImagesAdminPanel />
           </TabsContent>
           <TabsContent value="research">
             <ResearchAdminPanel userId={user.id} />
@@ -1319,6 +1327,8 @@ function SettingsAdminPanel() {
   );
 }
 
+type LecturerLink = { label: string; url: string };
+
 type LecturerRow = {
   id: string;
   name: string;
@@ -1328,6 +1338,7 @@ type LecturerRow = {
   image_url: string | null;
   display_order: number;
   is_active: boolean;
+  links: LecturerLink[];
 };
 
 type ResearchWorkRow = {
@@ -1360,6 +1371,7 @@ function LecturerEditCard({
   const [bio, setBio] = useState(lecturer.bio ?? "");
   const [interests, setInterests] = useState(lecturer.research_interests.join(", "));
   const [email, setEmail] = useState(lecturer.email ?? "");
+  const [links, setLinks] = useState<LecturerLink[]>(lecturer.links ?? []);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(lecturer.image_url);
   const [saving, setSaving] = useState(false);
@@ -1369,6 +1381,7 @@ function LecturerEditCard({
     setBio(lecturer.bio ?? "");
     setInterests(lecturer.research_interests.join(", "));
     setEmail(lecturer.email ?? "");
+    setLinks(lecturer.links ?? []);
     setPreview(lecturer.image_url);
   }, [lecturer.id]);
 
@@ -1397,6 +1410,7 @@ function LecturerEditCard({
       research_interests: interestList,
       email: email.trim() || null,
       image_url: imageUrl,
+      links: links.filter((l) => l.label.trim() && l.url.trim()),
     }).eq("id", lecturer.id);
     setSaving(false);
     if (error) { toast.error(error.message); return; }
@@ -1453,6 +1467,45 @@ function LecturerEditCard({
           <Input className="mt-1" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div>
+          <Label>Links</Label>
+          <div className="mt-1.5 space-y-2">
+            {links.map((link, i) => (
+              <div key={i} className="flex gap-2 items-center">
+                <Input
+                  placeholder="Label (e.g. Google Scholar)"
+                  value={link.label}
+                  onChange={(e) => setLinks(links.map((l, idx) => idx === i ? { ...l, label: e.target.value } : l))}
+                  className="flex-1"
+                />
+                <Input
+                  placeholder="https://..."
+                  type="url"
+                  value={link.url}
+                  onChange={(e) => setLinks(links.map((l, idx) => idx === i ? { ...l, url: e.target.value } : l))}
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="text-destructive shrink-0"
+                  onClick={() => setLinks(links.filter((_, idx) => idx !== i))}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setLinks([...links, { label: "", url: "" }])}
+            >
+              + Add link
+            </Button>
+          </div>
+        </div>
+        <div>
           <Label>{lecturer.image_url ? "Replace photo" : "Upload photo"}</Label>
           <Input className="mt-1" type="file" accept="image/*" onChange={handleFile} />
         </div>
@@ -1460,6 +1513,141 @@ function LecturerEditCard({
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
         </Button>
       </form>
+    </div>
+  );
+}
+
+const SITE_IMAGE_SLOTS = [
+  { key: "navbar_logo",           label: "Navbar logo",                  hint: "Square/round logo in the top navigation bar" },
+  { key: "hero",                  label: "Homepage hero",                 hint: "Wide landscape behind the main headline" },
+  { key: "card_internships",      label: "Homepage — Internships card",   hint: "Image on the 'Internships & placements' card" },
+  { key: "card_events",           label: "Homepage — Events card",        hint: "Image on the 'Events & workshops' card" },
+  { key: "card_community",        label: "Homepage — Blog card",          hint: "Image on the 'Blog & Articles' card" },
+  { key: "about_mission",         label: "About — mission photo",         hint: "Photo beside Mission & Vision text" },
+  { key: "gallery_snake_plant",   label: "Gallery 1 — courtyard plants",  hint: "" },
+  { key: "gallery_members_1",     label: "Gallery 2 — members field",     hint: "" },
+  { key: "gallery_campus_entrance", label: "Gallery 3 — campus entrance", hint: "" },
+  { key: "gallery_activity",      label: "Gallery 4 — ABCOSSA activity",  hint: "" },
+  { key: "gallery_walkway",       label: "Gallery 5 — campus walkway",    hint: "" },
+  { key: "gallery_illustration",  label: "Gallery 6 — ABCOSSA illustration", hint: "" },
+  { key: "gallery_palm",          label: "Gallery 7 — courtyard palm",    hint: "" },
+  { key: "gallery_members_2",     label: "Gallery 8 — members event",     hint: "" },
+  { key: "gallery_entrance_alt",  label: "Gallery 9 — entrance alt",      hint: "" },
+] as const;
+
+function SiteImagesAdminPanel() {
+  const qc = useQueryClient();
+  const [uploadingKey, setUploadingKey] = useState<string | null>(null);
+
+  const { data: currentImages = {}, refetch } = useQuery({
+    queryKey: ["admin-site-images"],
+    queryFn: async () => {
+      if (!supabase) return {};
+      const { data, error } = await supabase.from("site_images").select("key,url");
+      if (error) throw error;
+      return Object.fromEntries(
+        (data as { key: string; url: string }[]).map((r) => [r.key, r.url]),
+      ) as Record<string, string>;
+    },
+  });
+
+  const uploadImage = async (key: string, label: string, file: File | null) => {
+    if (!file || !supabase) return;
+    setUploadingKey(key);
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `${key}-${Date.now()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from("site-images")
+      .upload(path, file, { upsert: false });
+    if (upErr) {
+      setUploadingKey(null);
+      toast.error(upErr.message);
+      return;
+    }
+    const { data: pub } = supabase.storage.from("site-images").getPublicUrl(path);
+    const { error: dbErr } = await supabase
+      .from("site_images")
+      .upsert({ key, label, url: pub.publicUrl, updated_at: new Date().toISOString() });
+    setUploadingKey(null);
+    if (dbErr) {
+      toast.error(dbErr.message);
+      return;
+    }
+    toast.success("Image updated");
+    qc.invalidateQueries({ queryKey: ["site-images"] });
+    refetch();
+  };
+
+  const clearImage = async (key: string) => {
+    if (!confirm("Remove this override? The site will use its built-in default image.") || !supabase) return;
+    const { error } = await supabase.from("site_images").delete().eq("key", key);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Override removed");
+    qc.invalidateQueries({ queryKey: ["site-images"] });
+    refetch();
+  };
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        Upload a replacement for any built-in image. The original image stays on the site until you upload an override.
+        Clicking "Clear override" reverts that slot back to the original.
+      </p>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {SITE_IMAGE_SLOTS.map((slot) => (
+          <div key={slot.key} className="card-nature p-4 rounded-xl space-y-3">
+            <div>
+              <p className="font-medium text-sm text-foreground">{slot.label}</p>
+              {slot.hint && <p className="text-xs text-muted-foreground mt-0.5">{slot.hint}</p>}
+            </div>
+
+            <div className="relative w-full h-28 rounded-lg overflow-hidden bg-muted flex items-center justify-center border border-border/40">
+              {currentImages[slot.key] ? (
+                <img
+                  src={currentImages[slot.key]}
+                  alt={slot.label}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">Using site default</p>
+              )}
+            </div>
+
+            {currentImages[slot.key] && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-destructive text-xs h-7 px-2"
+                onClick={() => clearImage(slot.key)}
+              >
+                <Trash2 className="w-3 h-3 mr-1" /> Clear override
+              </Button>
+            )}
+
+            <div>
+              <Label className="text-xs text-muted-foreground">
+                {currentImages[slot.key] ? "Replace image" : "Upload image"}
+              </Label>
+              <Input
+                className="mt-1"
+                type="file"
+                accept="image/*"
+                disabled={uploadingKey === slot.key}
+                onChange={(e) => {
+                  const el = e.target;
+                  uploadImage(slot.key, slot.label, el.files?.[0] ?? null).then(() => { el.value = ""; });
+                }}
+              />
+              {uploadingKey === slot.key && (
+                <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Uploading…
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1501,6 +1689,7 @@ function ResearchAdminPanel({ userId }: { userId: string }) {
   const [newBio, setNewBio] = useState("");
   const [newInterests, setNewInterests] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [newLinks, setNewLinks] = useState<LecturerLink[]>([]);
   const [newFile, setNewFile] = useState<File | null>(null);
   const [newSaving, setNewSaving] = useState(false);
   const [showAddLecturer, setShowAddLecturer] = useState(false);
@@ -1527,11 +1716,12 @@ function ResearchAdminPanel({ userId }: { userId: string }) {
       image_url: imageUrl,
       display_order: nextOrder,
       is_active: true,
+      links: newLinks.filter((l) => l.label.trim() && l.url.trim()),
     });
     setNewSaving(false);
     if (error) { toast.error(error.message); return; }
     toast.success(`${newName} added`);
-    setNewName(""); setNewBio(""); setNewInterests(""); setNewEmail(""); setNewFile(null);
+    setNewName(""); setNewBio(""); setNewInterests(""); setNewEmail(""); setNewLinks([]); setNewFile(null);
     setShowAddLecturer(false);
     onLecturerSaved();
   };
@@ -1639,6 +1829,45 @@ function ResearchAdminPanel({ userId }: { userId: string }) {
               <div>
                 <Label>Email</Label>
                 <Input className="mt-1" type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
+              </div>
+              <div>
+                <Label>Links (optional)</Label>
+                <div className="mt-1.5 space-y-2">
+                  {newLinks.map((link, i) => (
+                    <div key={i} className="flex gap-2 items-center">
+                      <Input
+                        placeholder="Label (e.g. Google Scholar)"
+                        value={link.label}
+                        onChange={(e) => setNewLinks(newLinks.map((l, idx) => idx === i ? { ...l, label: e.target.value } : l))}
+                        className="flex-1"
+                      />
+                      <Input
+                        placeholder="https://..."
+                        type="url"
+                        value={link.url}
+                        onChange={(e) => setNewLinks(newLinks.map((l, idx) => idx === i ? { ...l, url: e.target.value } : l))}
+                        className="flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive shrink-0"
+                        onClick={() => setNewLinks(newLinks.filter((_, idx) => idx !== i))}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setNewLinks([...newLinks, { label: "", url: "" }])}
+                  >
+                    + Add link
+                  </Button>
+                </div>
               </div>
               <div>
                 <Label>Photo (optional)</Label>

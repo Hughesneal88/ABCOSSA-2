@@ -16,7 +16,7 @@ import leadershipVicePresident from "@/assets/leadership-vice-president.jpg";
 import leadershipGeneralSecretary from "@/assets/leadership-general-secretary.png";
 import leadershipDeputyGeneralSecretary from "@/assets/leadership-deputy-general-secretary.png";
 import { CORE_VALUES, MISSION_STATEMENT, VISION_STATEMENT } from "@/config/site";
-import { useLeadershipMembers } from "@/hooks/useSupabasePublic";
+import { useLeadershipMembers, useSiteImages } from "@/hooks/useSupabasePublic";
 import { isSupabaseConfigured } from "@/integrations/supabase/client";
 
 const leadership: {
@@ -92,6 +92,7 @@ const committees: { title: string; description: string; icon: LucideIcon }[] = [
 
 export default function AboutPage() {
   const { data: dbLeadership = [], isLoading: leadershipLoading } = useLeadershipMembers();
+  const { data: siteImages = {} } = useSiteImages();
   const activeLeadership = isSupabaseConfigured
     ? dbLeadership
     : leadership;
@@ -119,7 +120,7 @@ export default function AboutPage() {
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div className="animate-fade-up">
               <img
-                src={missionImage}
+                src={siteImages["about_mission"] ?? missionImage}
                 alt="Department of Animal Biology and Conservation Science building surrounded by trees"
                 className="w-full rounded-2xl shadow-elevated"
               />
