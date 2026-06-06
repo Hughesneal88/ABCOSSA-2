@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Mail, Phone, MapPin, Instagram, Twitter, Music2, Ghost, MessageCircle, Link2 } from "lucide-react";
+import { Mail, Phone, MapPin, Instagram, Twitter, Music2, Ghost, MessageCircle, Link2, Linkedin } from "lucide-react";
 import { CONTACT, RESOURCES_TELEGRAM_URL, SOCIAL } from "@/config/site";
 
 const footerLinks = {
@@ -17,6 +17,7 @@ const footerLinks = {
 
 const socialLinks = [
   { name: "Instagram", icon: Instagram, href: SOCIAL.instagram },
+  { name: "LinkedIn", icon: Linkedin, href: SOCIAL.linkedin },
   { name: "TikTok", icon: Music2, href: SOCIAL.tiktok },
   { name: "X", icon: Twitter, href: SOCIAL.twitter },
   { name: "Snapchat", icon: Ghost, href: SOCIAL.snapchat },

@@ -106,6 +106,7 @@ export const SOCIAL = {
   twitter: "https://x.com/abcossa_ug",
   snapchat: "https://www.snapchat.com/@abcossa.ug",
   whatsapp: "https://www.whatsapp.com/channel/0029Vb60pAfG3R3dnklAA32V",
+  linkedin: "https://www.linkedin.com/company/animal-biology-and-conservation-science-students-association-university-of-ghana/",
   linktree:
     "https://linktr.ee/abcossa.ug?utm_source=linktree_profile_share&ltsid=c895f7f7-7377-44ed-9c7a-5963619c9703",
 } as const;

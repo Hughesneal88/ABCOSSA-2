@@ -10,6 +10,7 @@ import {
   Ghost,
   MessageCircle,
   Link2,
+  Linkedin,
   ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 const socialLinks: { name: string; href: string; icon: typeof Instagram }[] = [
   { name: "Instagram", href: SOCIAL.instagram, icon: Instagram },
+  { name: "LinkedIn", href: SOCIAL.linkedin, icon: Linkedin },
   { name: "TikTok", href: SOCIAL.tiktok, icon: Music2 },
   { name: "X (Twitter)", href: SOCIAL.twitter, icon: Twitter },
   { name: "Snapchat", href: SOCIAL.snapchat, icon: Ghost },
