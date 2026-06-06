@@ -16,6 +16,7 @@ import {
   Check,
   X as XIcon,
   Image,
+  FolderOpen,
 } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -432,6 +433,10 @@ export default function AdminContentPage() {
               <Image className="w-3.5 h-3.5" />
               Images
             </TabsTrigger>
+            <TabsTrigger value="slides" className="gap-1.5">
+              <FolderOpen className="w-3.5 h-3.5" />
+              Slides
+            </TabsTrigger>
             <TabsTrigger value="research" className="gap-1.5">
               <BookOpen className="w-3.5 h-3.5" />
               Research
@@ -466,6 +471,9 @@ export default function AdminContentPage() {
           </TabsContent>
           <TabsContent value="images">
             <SiteImagesAdminPanel />
+          </TabsContent>
+          <TabsContent value="slides">
+            <ResourcesAdminPanel />
           </TabsContent>
           <TabsContent value="research">
             <ResearchAdminPanel userId={user.id} />
@@ -1847,6 +1855,208 @@ function SiteImagesAdminPanel() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+const RESOURCE_YEARS = ["L100", "L200", "L300", "L400"] as const;
+const RESOURCE_SEMESTERS = ["1st", "2nd"] as const;
+
+type ResourceRow = {
+  id: string;
+  year: string;
+  semester: string;
+  label: string;
+  drive_url: string;
+  display_order: number;
+};
+
+function ResourcesAdminPanel() {
+  const qc = useQueryClient();
+
+  const { data: rows = [], refetch } = useQuery({
+    queryKey: ["admin-resources"],
+    queryFn: async (): Promise<ResourceRow[]> => {
+      if (!supabase) return [];
+      const { data, error } = await supabase
+        .from("resources")
+        .select("*")
+        .order("display_order", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as ResourceRow[];
+    },
+  });
+
+  // Add form
+  const [year, setYear] = useState<string>("L100");
+  const [semester, setSemester] = useState<string>("1st");
+  const [label, setLabel] = useState("");
+  const [driveUrl, setDriveUrl] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  // Inline edit
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editYear, setEditYear] = useState("");
+  const [editSemester, setEditSemester] = useState("");
+  const [editLabel, setEditLabel] = useState("");
+  const [editDriveUrl, setEditDriveUrl] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["public-resources"] });
+    refetch();
+  };
+
+  const startEdit = (row: ResourceRow) => {
+    setEditingId(row.id);
+    setEditYear(row.year);
+    setEditSemester(row.semester);
+    setEditLabel(row.label);
+    setEditDriveUrl(row.drive_url);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase) return;
+    setAdding(true);
+    const nextOrder = rows.length > 0 ? Math.max(...rows.map((r) => r.display_order)) + 1 : 0;
+    const { error } = await supabase.from("resources").insert({
+      year, semester, label: label.trim(), drive_url: driveUrl.trim(), display_order: nextOrder,
+    });
+    setAdding(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Folder added");
+    setLabel(""); setDriveUrl("");
+    invalidate();
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !editingId) return;
+    setEditSaving(true);
+    const { error } = await supabase.from("resources").update({
+      year: editYear, semester: editSemester,
+      label: editLabel.trim(), drive_url: editDriveUrl.trim(),
+    }).eq("id", editingId);
+    setEditSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Updated");
+    setEditingId(null);
+    invalidate();
+  };
+
+  const remove = async (id: string) => {
+    if (!confirm("Remove this folder link?") || !supabase) return;
+    const { error } = await supabase.from("resources").delete().eq("id", id);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Removed");
+    invalidate();
+  };
+
+  return (
+    <div className="space-y-8">
+      <section className="card-nature p-6 rounded-2xl space-y-4">
+        <h2 className="font-display text-lg font-semibold">Add a Google Drive folder</h2>
+        <p className="text-sm text-muted-foreground">
+          Each entry appears as a card on the public Resources page, filtered by year and semester.
+        </p>
+        <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label>Year</Label>
+            <select
+              className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              value={year}
+              onChange={(e) => setYear(e.target.value)}
+            >
+              {RESOURCE_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <div>
+            <Label>Semester</Label>
+            <select
+              className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              value={semester}
+              onChange={(e) => setSemester(e.target.value)}
+            >
+              {RESOURCE_SEMESTERS.map((s) => <option key={s} value={s}>{s} Semester</option>)}
+            </select>
+          </div>
+          <div className="sm:col-span-2">
+            <Label>Label (shown on the card)</Label>
+            <Input className="mt-1" value={label} onChange={(e) => setLabel(e.target.value)} required placeholder="e.g. L100 2nd Semester Slides" />
+          </div>
+          <div className="sm:col-span-2">
+            <Label>Google Drive URL</Label>
+            <Input className="mt-1" type="url" value={driveUrl} onChange={(e) => setDriveUrl(e.target.value)} required placeholder="https://drive.google.com/drive/folders/..." />
+          </div>
+          <Button type="submit" disabled={adding} className="sm:col-span-2 w-full sm:w-auto">
+            {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add folder"}
+          </Button>
+        </form>
+      </section>
+
+      <section>
+        <h3 className="font-medium mb-3">Current folders ({rows.length})</h3>
+        <ul className="space-y-2">
+          {rows.map((row) =>
+            editingId === row.id ? (
+              <li key={row.id} className="card-nature p-4 rounded-xl border-2 border-primary/20">
+                <form onSubmit={saveEdit} className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label className="text-xs">Year</Label>
+                    <select
+                      className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      value={editYear}
+                      onChange={(e) => setEditYear(e.target.value)}
+                    >
+                      {RESOURCE_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Semester</Label>
+                    <select
+                      className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      value={editSemester}
+                      onChange={(e) => setEditSemester(e.target.value)}
+                    >
+                      {RESOURCE_SEMESTERS.map((s) => <option key={s} value={s}>{s} Semester</option>)}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Label</Label>
+                    <Input className="mt-1" value={editLabel} onChange={(e) => setEditLabel(e.target.value)} required />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Google Drive URL</Label>
+                    <Input className="mt-1" type="url" value={editDriveUrl} onChange={(e) => setEditDriveUrl(e.target.value)} required />
+                  </div>
+                  <div className="sm:col-span-2 flex gap-2">
+                    <Button type="submit" size="sm" disabled={editSaving}>
+                      {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
+                  </div>
+                </form>
+              </li>
+            ) : (
+              <li key={row.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">{row.year}</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{row.semester} Sem</span>
+                <span className="flex-1 font-medium">{row.label}</span>
+                <a href={row.drive_url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline flex items-center gap-0.5">
+                  <ExternalLink className="w-3 h-3" /> View
+                </a>
+                <Button type="button" variant="ghost" size="sm" className="text-xs h-7" onClick={() => startEdit(row)}>
+                  Edit
+                </Button>
+                <Button type="button" variant="ghost" size="icon" className="text-destructive h-7 w-7" onClick={() => remove(row.id)}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </li>
+            )
+          )}
+        </ul>
+      </section>
     </div>
   );
 }

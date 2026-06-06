@@ -226,6 +226,31 @@ export function useSiteImages() {
   });
 }
 
+export type PublicResource = {
+  id: string;
+  year: string;
+  semester: string;
+  label: string;
+  drive_url: string;
+  display_order: number;
+};
+
+export function usePublicResources() {
+  return useQuery({
+    queryKey: ["public-resources"],
+    queryFn: async (): Promise<PublicResource[]> => {
+      if (!supabase) return [];
+      const { data, error } = await supabase
+        .from("resources")
+        .select("id,year,semester,label,drive_url,display_order")
+        .order("display_order", { ascending: true });
+      if (error) throw error;
+      return (data as PublicResource[]) ?? [];
+    },
+    enabled: isSupabaseConfigured,
+  });
+}
+
 export function useBlogPostBySlug(slug: string | undefined) {
   return useQuery({
     queryKey: ["blog-post", slug],

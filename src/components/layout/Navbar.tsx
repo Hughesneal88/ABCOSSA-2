@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { RESOURCES_TELEGRAM_URL } from "@/config/site";
 import { useSiteImages } from "@/hooks/useSupabasePublic";
 import abcossaLogo from "@/assets/WhatsApp Image 2026-05-05 at 5.23.56 PM.jpeg";
 
@@ -16,7 +15,7 @@ const navigation: NavItem[] = [
   { name: "Blog & Articles", href: "/news" },
   { name: "Research", href: "/research" },
   { name: "Events", href: "/events" },
-  { name: "Resources", href: RESOURCES_TELEGRAM_URL, external: true },
+  { name: "Resources", href: "/resources" },
   { name: "About", href: "/about" },
   { name: "Contact", href: "/contact" },
 ];
