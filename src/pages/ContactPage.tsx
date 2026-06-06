@@ -61,11 +61,13 @@ export default function ContactPage() {
     e.preventDefault();
     setSubmitting(true);
     if (supabase) {
-      const { error } = await supabase.from("contact_submissions").insert({
-        name: formData.name.trim(),
-        email: formData.email.trim(),
-        subject: formData.subject,
-        message: formData.message.trim(),
+      const { error } = await supabase.functions.invoke("send-contact-email", {
+        body: {
+          name: formData.name.trim(),
+          email: formData.email.trim(),
+          subject: formData.subject,
+          message: formData.message.trim(),
+        },
       });
       if (error) {
         setSubmitting(false);
