@@ -30,7 +30,7 @@ import { useLecturers, usePublishedResearchWorks, type PublicResearchWork } from
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
-const CATEGORIES = ["Paper", "Thesis", "Project", "Report", "Poster", "Other"];
+const CATEGORIES = ["Paper", "Thesis", "Project", "Report", "Poster", "Abstract", "Other"];
 
 type SortKey = "newest" | "oldest" | "az";
 

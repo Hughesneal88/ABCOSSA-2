@@ -1174,6 +1174,102 @@ function LeadershipSlotCard({ slot, existing, userId, onSaved }: {
   );
 }
 
+function AdditionalLeaderCard({ member, userId, onSaved, onDeleted }: {
+  member: LeadershipRow;
+  userId: string;
+  onSaved: () => void;
+  onDeleted: () => void;
+}) {
+  const [name, setName] = useState(member.name);
+  const [role, setRole] = useState(member.role);
+  const [bio, setBio] = useState(member.bio ?? "");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(member.image_url ?? null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setName(member.name); setRole(member.role); setBio(member.bio ?? ""); setPreview(member.image_url ?? null);
+  }, [member.id]);
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
+    if (f) setPreview(URL.createObjectURL(f));
+  };
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase) return;
+    setSaving(true);
+    let imageUrl: string | null = member.image_url ?? null;
+    if (file) {
+      const ext = file.name.split(".").pop() || "jpg";
+      const path = `${userId}/${member.id}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("leadership-images").upload(path, file, { upsert: true });
+      if (upErr) { setSaving(false); toast.error(upErr.message); return; }
+      imageUrl = supabase.storage.from("leadership-images").getPublicUrl(path).data.publicUrl;
+    }
+    const { error } = await supabase.from("leadership_members").update({
+      name: name.trim(), role: role.trim(), bio: bio.trim(), image_url: imageUrl, is_active: true,
+    }).eq("id", member.id);
+    setSaving(false);
+    if (error) { toast.error(error.message); return; }
+    setFile(null);
+    toast.success(`${name} updated`);
+    onSaved();
+  };
+
+  const deleteMember = async () => {
+    if (!confirm(`Remove ${member.name} from leadership?`) || !supabase) return;
+    const { error } = await supabase.from("leadership_members").delete().eq("id", member.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${member.name} removed`);
+    onDeleted();
+  };
+
+  return (
+    <div className="card-nature p-5 rounded-2xl space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-14 h-14 rounded-full overflow-hidden bg-primary/10 flex items-center justify-center shrink-0 ring-2 ring-primary/15">
+            {preview
+              ? <img src={preview} alt={member.name} className="w-full h-full object-cover" />
+              : <Users className="w-6 h-6 text-primary" />}
+          </div>
+          <div className="min-w-0">
+            <p className="font-display font-semibold text-foreground truncate">{member.name}</p>
+            <p className="text-xs text-muted-foreground truncate">{member.role}</p>
+          </div>
+        </div>
+        <Button type="button" variant="ghost" size="icon" className="text-destructive shrink-0" onClick={deleteMember} title="Remove member">
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </div>
+      <form onSubmit={save} className="space-y-3">
+        <div>
+          <Label>Role / title</Label>
+          <Input className="mt-1" value={role} onChange={(e) => setRole(e.target.value)} required placeholder="e.g. Financial Secretary" />
+        </div>
+        <div>
+          <Label>Full name</Label>
+          <Input className="mt-1" value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div>
+          <Label>Short bio</Label>
+          <Textarea className="mt-1" rows={2} value={bio} onChange={(e) => setBio(e.target.value)} placeholder="One or two sentences about their responsibilities." />
+        </div>
+        <div>
+          <Label>{member.image_url ? "Replace photo" : "Upload photo"}</Label>
+          <Input className="mt-1" type="file" accept="image/*" onChange={handleFile} />
+        </div>
+        <Button type="submit" size="sm" disabled={saving} className="w-full">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save changes"}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
 function LeadershipAdminPanel({ userId }: { userId: string }) {
   const qc = useQueryClient();
   const { data: rows = [], refetch } = useQuery({
@@ -1186,27 +1282,130 @@ function LeadershipAdminPanel({ userId }: { userId: string }) {
     },
   });
 
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addRole, setAddRole] = useState("");
+  const [addName, setAddName] = useState("");
+  const [addBio, setAddBio] = useState("");
+  const [addFile, setAddFile] = useState<File | null>(null);
+  const [addSaving, setAddSaving] = useState(false);
+
   const onSaved = () => {
     qc.invalidateQueries({ queryKey: ["leadership-members"] });
     refetch();
   };
 
+  const coreRoles = new Set(LEADERSHIP_ROLES.map((r) => r.role));
+  const additionalMembers = rows.filter((r) => !coreRoles.has(r.role));
+
+  const addMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase) return;
+    setAddSaving(true);
+    let imageUrl: string | null = null;
+    if (addFile) {
+      const ext = addFile.name.split(".").pop() || "jpg";
+      const path = `${userId}/custom-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("leadership-images").upload(path, addFile, { upsert: false });
+      if (upErr) { setAddSaving(false); toast.error(upErr.message); return; }
+      imageUrl = supabase.storage.from("leadership-images").getPublicUrl(path).data.publicUrl;
+    }
+    const nextOrder = rows.length > 0 ? Math.max(...rows.map((r) => r.display_order)) + 1 : 10;
+    const { error } = await supabase.from("leadership_members").insert({
+      name: addName.trim(),
+      role: addRole.trim(),
+      bio: addBio.trim(),
+      image_url: imageUrl,
+      display_order: nextOrder,
+      is_active: true,
+    });
+    setAddSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${addName} added`);
+    setAddRole(""); setAddName(""); setAddBio(""); setAddFile(null);
+    setShowAddForm(false);
+    onSaved();
+  };
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Update each position directly. Changes appear immediately on the About page.
-      </p>
-      <div className="grid sm:grid-cols-2 gap-4">
-        {LEADERSHIP_ROLES.map((slot) => (
-          <LeadershipSlotCard
-            key={slot.role}
-            slot={slot}
-            existing={rows.find((r) => r.role === slot.role)}
-            userId={userId}
-            onSaved={onSaved}
-          />
-        ))}
-      </div>
+    <div className="space-y-10">
+      {/* Core executive */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="font-display text-lg font-semibold">Core executive</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Update each position directly. Changes appear immediately on the About page.
+          </p>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          {LEADERSHIP_ROLES.map((slot) => (
+            <LeadershipSlotCard
+              key={slot.role}
+              slot={slot}
+              existing={rows.find((r) => r.role === slot.role)}
+              userId={userId}
+              onSaved={onSaved}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* Additional members */}
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-display text-lg font-semibold">Additional members</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Other positions (e.g. Financial Secretary, PRO) shown below the core executive on the About page.
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={() => setShowAddForm((v) => !v)}>
+            {showAddForm ? "Cancel" : "+ Add member"}
+          </Button>
+        </div>
+
+        {showAddForm && (
+          <div className="card-nature p-5 rounded-2xl border-2 border-primary/20 space-y-4">
+            <p className="font-display font-semibold text-foreground">New member</p>
+            <form onSubmit={addMember} className="space-y-3">
+              <div>
+                <Label>Role / title</Label>
+                <Input className="mt-1" value={addRole} onChange={(e) => setAddRole(e.target.value)} required placeholder="e.g. Financial Secretary" />
+              </div>
+              <div>
+                <Label>Full name</Label>
+                <Input className="mt-1" value={addName} onChange={(e) => setAddName(e.target.value)} required placeholder="e.g. Ama Owusu" />
+              </div>
+              <div>
+                <Label>Short bio</Label>
+                <Textarea className="mt-1" rows={2} value={addBio} onChange={(e) => setAddBio(e.target.value)} placeholder="One or two sentences about their responsibilities." />
+              </div>
+              <div>
+                <Label>Photo (optional)</Label>
+                <Input className="mt-1" type="file" accept="image/*" onChange={(e) => setAddFile(e.target.files?.[0] ?? null)} />
+              </div>
+              <Button type="submit" size="sm" disabled={addSaving} className="w-full">
+                {addSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add member"}
+              </Button>
+            </form>
+          </div>
+        )}
+
+        {additionalMembers.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No additional members yet — use "+ Add member" above.</p>
+        ) : (
+          <div className="grid sm:grid-cols-2 gap-4">
+            {additionalMembers.map((member) => (
+              <AdditionalLeaderCard
+                key={member.id}
+                member={member}
+                userId={userId}
+                onSaved={onSaved}
+                onDeleted={onSaved}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -1652,7 +1851,7 @@ function SiteImagesAdminPanel() {
   );
 }
 
-const RESEARCH_CATEGORIES = ["Paper", "Thesis", "Project", "Report", "Poster", "Other"] as const;
+const RESEARCH_CATEGORIES = ["Paper", "Thesis", "Project", "Report", "Poster", "Abstract", "Other"] as const;
 
 function ResearchAdminPanel({ userId }: { userId: string }) {
   const qc = useQueryClient();
