@@ -1286,7 +1286,7 @@ function LeadershipAdminPanel({ userId }: { userId: string }) {
     queryKey: ["admin-leadership"],
     queryFn: async () => {
       if (!supabase) return [];
-      const { data, error } = await supabase.from("leadership_members").select("*").order("display_order", { ascending: true });
+      const { data, error } = await supabase.from("leadership_members").select("*");
       if (error) throw error;
       return (data ?? []) as LeadershipRow[];
     },
@@ -1305,7 +1305,45 @@ function LeadershipAdminPanel({ userId }: { userId: string }) {
   };
 
   const coreRoles = new Set(LEADERSHIP_ROLES.map((r) => r.role));
-  const additionalMembers = rows.filter((r) => !coreRoles.has(r.role));
+  const coreRows = rows.filter((r) => coreRoles.has(r.role));
+  const additionalMembers = [...rows.filter((r) => !coreRoles.has(r.role))].sort(
+    (a, b) => a.display_order - b.display_order || a.id.localeCompare(b.id),
+  );
+
+  // Core slots sorted by their DB row's display_order; fall back to constant order
+  const sortedCoreSlots = [...LEADERSHIP_ROLES].sort((a, b) => {
+    const oa = coreRows.find((r) => r.role === a.role)?.display_order ?? a.order;
+    const ob = coreRows.find((r) => r.role === b.role)?.display_order ?? b.order;
+    return oa - ob;
+  });
+
+  const swapDisplayOrder = async (idA: string, orderA: number, idB: string, orderB: number) => {
+    if (!supabase) return;
+    await Promise.all([
+      supabase.from("leadership_members").update({ display_order: orderB }).eq("id", idA),
+      supabase.from("leadership_members").update({ display_order: orderA }).eq("id", idB),
+    ]);
+    onSaved();
+  };
+
+  const moveCore = async (role: string, direction: "up" | "down") => {
+    const idx = sortedCoreSlots.findIndex((s) => s.role === role);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= sortedCoreSlots.length) return;
+    const rowA = coreRows.find((r) => r.role === sortedCoreSlots[idx].role);
+    const rowB = coreRows.find((r) => r.role === sortedCoreSlots[swapIdx].role);
+    if (!rowA || !rowB) return;
+    await swapDisplayOrder(rowA.id, rowA.display_order, rowB.id, rowB.display_order);
+  };
+
+  const moveAdditional = async (id: string, direction: "up" | "down") => {
+    const idx = additionalMembers.findIndex((r) => r.id === id);
+    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= additionalMembers.length) return;
+    const a = additionalMembers[idx];
+    const b = additionalMembers[swapIdx];
+    await swapDisplayOrder(a.id, a.display_order, b.id, b.display_order);
+  };
 
   const addMember = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1343,19 +1381,45 @@ function LeadershipAdminPanel({ userId }: { userId: string }) {
         <div>
           <h2 className="font-display text-lg font-semibold">Core executive</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Update each position directly. Changes appear immediately on the About page.
+            Update each position directly. Use the arrows to reorder how they appear on the About page.
           </p>
         </div>
-        <div className="grid sm:grid-cols-2 gap-4">
-          {LEADERSHIP_ROLES.map((slot) => (
-            <LeadershipSlotCard
-              key={slot.role}
-              slot={slot}
-              existing={rows.find((r) => r.role === slot.role)}
-              userId={userId}
-              onSaved={onSaved}
-            />
-          ))}
+        <div className="space-y-3">
+          {sortedCoreSlots.map((slot, idx) => {
+            const rowExists = !!coreRows.find((r) => r.role === slot.role);
+            const prevRowExists = idx > 0 && !!coreRows.find((r) => r.role === sortedCoreSlots[idx - 1].role);
+            const nextRowExists = idx < sortedCoreSlots.length - 1 && !!coreRows.find((r) => r.role === sortedCoreSlots[idx + 1].role);
+            return (
+              <div key={slot.role} className="flex gap-2 items-start">
+                <div className="flex flex-col gap-0.5 pt-3 shrink-0">
+                  <Button
+                    type="button" variant="ghost" size="icon"
+                    className="h-6 w-6 text-muted-foreground disabled:opacity-20"
+                    disabled={idx === 0 || !rowExists || !prevRowExists}
+                    onClick={() => moveCore(slot.role, "up")}
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    type="button" variant="ghost" size="icon"
+                    className="h-6 w-6 text-muted-foreground disabled:opacity-20"
+                    disabled={idx === sortedCoreSlots.length - 1 || !rowExists || !nextRowExists}
+                    onClick={() => moveCore(slot.role, "down")}
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="flex-1">
+                  <LeadershipSlotCard
+                    slot={slot}
+                    existing={rows.find((r) => r.role === slot.role)}
+                    userId={userId}
+                    onSaved={onSaved}
+                  />
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
 
@@ -1403,15 +1467,36 @@ function LeadershipAdminPanel({ userId }: { userId: string }) {
         {additionalMembers.length === 0 ? (
           <p className="text-sm text-muted-foreground">No additional members yet — use "+ Add member" above.</p>
         ) : (
-          <div className="grid sm:grid-cols-2 gap-4">
-            {additionalMembers.map((member) => (
-              <AdditionalLeaderCard
-                key={member.id}
-                member={member}
-                userId={userId}
-                onSaved={onSaved}
-                onDeleted={onSaved}
-              />
+          <div className="space-y-3">
+            {additionalMembers.map((member, idx) => (
+              <div key={member.id} className="flex gap-2 items-start">
+                <div className="flex flex-col gap-0.5 pt-3 shrink-0">
+                  <Button
+                    type="button" variant="ghost" size="icon"
+                    className="h-6 w-6 text-muted-foreground disabled:opacity-20"
+                    disabled={idx === 0}
+                    onClick={() => moveAdditional(member.id, "up")}
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    type="button" variant="ghost" size="icon"
+                    className="h-6 w-6 text-muted-foreground disabled:opacity-20"
+                    disabled={idx === additionalMembers.length - 1}
+                    onClick={() => moveAdditional(member.id, "down")}
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="flex-1">
+                  <AdditionalLeaderCard
+                    member={member}
+                    userId={userId}
+                    onSaved={onSaved}
+                    onDeleted={onSaved}
+                  />
+                </div>
+              </div>
             ))}
           </div>
         )}
