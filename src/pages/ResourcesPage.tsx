@@ -12,21 +12,37 @@ const SEMESTERS = [
   { key: "2nd", label: "2nd Semester" },
 ] as const;
 
+const YEAR_ORDER: Record<string, number> = { L100: 0, L200: 1, L300: 2, L400: 3 };
+const SEM_ORDER: Record<string, number> = { "1st": 0, "2nd": 1 };
+
+type Resource = { id: string; year: string; semester: string; label: string; drive_url: string; display_order: number };
+
+function sortResources(arr: Resource[]): Resource[] {
+  return [...arr].sort((a, b) => {
+    const y = (YEAR_ORDER[a.year] ?? 99) - (YEAR_ORDER[b.year] ?? 99);
+    if (y !== 0) return y;
+    const s = (SEM_ORDER[a.semester] ?? 99) - (SEM_ORDER[b.semester] ?? 99);
+    if (s !== 0) return s;
+    return a.display_order - b.display_order;
+  });
+}
+
 // Static fallback when Supabase is not configured
-const STATIC_RESOURCES = [
-  { id: "s1", year: "L100", semester: "2nd", label: "L100 2nd Semester Slides",     drive_url: "https://drive.google.com/drive/folders/1f_xkJvvxjj2cN1IopaAPubwTtG_47COU",  display_order: 0 },
-  { id: "s2", year: "L200", semester: "2nd", label: "L200 2nd Semester Slides",     drive_url: "https://drive.google.com/drive/folders/193HFnY2cB2Fdjuw8BDCUAKdbotazo44-",   display_order: 1 },
-  { id: "s3", year: "L300", semester: "2nd", label: "L300 2nd Semester Slides",     drive_url: "https://drive.google.com/drive/folders/1AGoxdFKwY9bjM0xFMvTAAcy6t4FIxR0h",   display_order: 2 },
-  { id: "s4", year: "L400", semester: "2nd", label: "L400 2nd Semester Slides",     drive_url: "https://drive.google.com/drive/folders/1DZcqrxOwIQIzOLJxyTK7x4B-Xtp8pJLR",   display_order: 3 },
-  { id: "s5", year: "L200", semester: "1st", label: "L200 1st Semester Slides",     drive_url: "https://drive.google.com/drive/folders/1Q_PMGMayHe77gznEJTy7gw1rCxzOnhTd",   display_order: 4 },
-  { id: "s6", year: "L200", semester: "1st", label: "L200 1st Semester Slides — 2", drive_url: "https://drive.google.com/drive/folders/1lYJZ4F95os6tuZxQU9mcrQQRdM8nd2wr",    display_order: 5 },
-  { id: "s7", year: "L200", semester: "1st", label: "L200 1st Semester Slides — 3", drive_url: "https://drive.google.com/drive/folders/1n9G5AaEBJRVAs1NjEOZvu8jJKzTwa0dY",    display_order: 6 },
-  { id: "s8", year: "L200", semester: "1st", label: "L200 1st Semester Slides — 4", drive_url: "https://drive.google.com/drive/folders/1HS8Ship1M13pgazTr2Xir-Gcbu0IJqi0",    display_order: 7 },
+const STATIC_RESOURCES: Resource[] = [
+  { id: "s1", year: "L100", semester: "1st", label: "L100 1st Semester Study Materials", drive_url: "https://drive.google.com/drive/folders/1f_xkJvvxjj2cN1IopaAPubwTtG_47COU", display_order: 0 },
+  { id: "s2", year: "L200", semester: "1st", label: "L200 1st Semester Study Materials", drive_url: "https://drive.google.com/drive/folders/1Q_PMGMayHe77gznEJTy7gw1rCxzOnhTd", display_order: 0 },
+  { id: "s3", year: "L200", semester: "1st", label: "L200 1st Semester Study Materials — 2", drive_url: "https://drive.google.com/drive/folders/1lYJZ4F95os6tuZxQU9mcrQQRdM8nd2wr", display_order: 1 },
+  { id: "s4", year: "L200", semester: "1st", label: "L200 1st Semester Study Materials — 3", drive_url: "https://drive.google.com/drive/folders/1n9G5AaEBJRVAs1NjEOZvu8jJKzTwa0dY", display_order: 2 },
+  { id: "s5", year: "L200", semester: "1st", label: "L200 1st Semester Study Materials — 4", drive_url: "https://drive.google.com/drive/folders/1HS8Ship1M13pgazTr2Xir-Gcbu0IJqi0", display_order: 3 },
+  { id: "s6", year: "L200", semester: "2nd", label: "L200 2nd Semester Study Materials", drive_url: "https://drive.google.com/drive/folders/193HFnY2cB2Fdjuw8BDCUAKdbotazo44-", display_order: 0 },
+  { id: "s7", year: "L300", semester: "2nd", label: "L300 2nd Semester Study Materials", drive_url: "https://drive.google.com/drive/folders/1AGoxdFKwY9bjM0xFMvTAAcy6t4FIxR0h", display_order: 0 },
+  { id: "s8", year: "L400", semester: "2nd", label: "L400 2nd Semester Study Materials", drive_url: "https://drive.google.com/drive/folders/1DZcqrxOwIQIzOLJxyTK7x4B-Xtp8pJLR", display_order: 0 },
 ];
 
 export default function ResourcesPage() {
   const { data: dbResources = [], isLoading } = usePublicResources();
-  const resources = isSupabaseConfigured ? dbResources : STATIC_RESOURCES;
+  const raw = isSupabaseConfigured ? dbResources : STATIC_RESOURCES;
+  const resources = sortResources(raw as Resource[]);
 
   const [yearFilter, setYearFilter] = useState("All");
   const [semesterFilter, setSemesterFilter] = useState("All");
@@ -54,7 +70,7 @@ export default function ResourcesPage() {
               Resources
             </h1>
             <p className="text-xl text-primary-foreground/90 animate-fade-up delay-100">
-              Lecture slides and study materials for every year and semester.
+              Study materials and resources for every year and semester.
               Filter by your level and semester, then open the Google Drive folder.
             </p>
           </div>
@@ -106,7 +122,7 @@ export default function ResourcesPage() {
           ) : filtered.length === 0 ? (
             <div className="py-20 text-center">
               <FolderOpen className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-              <p className="text-muted-foreground">No folders available for this filter yet — check back soon.</p>
+              <p className="text-muted-foreground">No study materials available for this filter yet — check back soon.</p>
             </div>
           ) : (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -147,15 +163,15 @@ export default function ResourcesPage() {
         </div>
       </section>
 
-      {/* Telegram slides bank */}
+      {/* Telegram study materials */}
       <section className="py-12 border-t border-border bg-muted/30">
         <div className="container mx-auto px-4 lg:px-8 max-w-2xl text-center">
           <p className="text-muted-foreground mb-4 text-sm">
-            Looking for more? The ABCOSSA slides bank on Telegram has additional materials shared by members.
+            Looking for more? The ABCOSSA study materials channel on Telegram has additional resources shared by members.
           </p>
           <Button variant="outline" asChild>
             <a href={RESOURCES_TELEGRAM_URL} target="_blank" rel="noopener noreferrer">
-              ABCOSSA slides bank (Telegram)
+              ABCOSSA study materials (Telegram)
               <ExternalLink className="w-4 h-4" />
             </a>
           </Button>

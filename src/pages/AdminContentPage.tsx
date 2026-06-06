@@ -17,6 +17,8 @@ import {
   X as XIcon,
   Image,
   FolderOpen,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -433,9 +435,9 @@ export default function AdminContentPage() {
               <Image className="w-3.5 h-3.5" />
               Images
             </TabsTrigger>
-            <TabsTrigger value="slides" className="gap-1.5">
+            <TabsTrigger value="resources" className="gap-1.5">
               <FolderOpen className="w-3.5 h-3.5" />
-              Slides
+              Resources
             </TabsTrigger>
             <TabsTrigger value="research" className="gap-1.5">
               <BookOpen className="w-3.5 h-3.5" />
@@ -472,7 +474,7 @@ export default function AdminContentPage() {
           <TabsContent value="images">
             <SiteImagesAdminPanel />
           </TabsContent>
-          <TabsContent value="slides">
+          <TabsContent value="resources">
             <ResourcesAdminPanel />
           </TabsContent>
           <TabsContent value="research">
@@ -1871,6 +1873,19 @@ type ResourceRow = {
   display_order: number;
 };
 
+const RESOURCE_YEAR_ORDER: Record<string, number> = { L100: 0, L200: 1, L300: 2, L400: 3 };
+const RESOURCE_SEM_ORDER: Record<string, number> = { "1st": 0, "2nd": 1 };
+
+function sortResourceRows(arr: ResourceRow[]): ResourceRow[] {
+  return [...arr].sort((a, b) => {
+    const y = (RESOURCE_YEAR_ORDER[a.year] ?? 99) - (RESOURCE_YEAR_ORDER[b.year] ?? 99);
+    if (y !== 0) return y;
+    const s = (RESOURCE_SEM_ORDER[a.semester] ?? 99) - (RESOURCE_SEM_ORDER[b.semester] ?? 99);
+    if (s !== 0) return s;
+    return a.display_order - b.display_order;
+  });
+}
+
 function ResourcesAdminPanel() {
   const qc = useQueryClient();
 
@@ -1880,12 +1895,13 @@ function ResourcesAdminPanel() {
       if (!supabase) return [];
       const { data, error } = await supabase
         .from("resources")
-        .select("*")
-        .order("display_order", { ascending: true });
+        .select("*");
       if (error) throw error;
       return (data ?? []) as ResourceRow[];
     },
   });
+
+  const sorted = sortResourceRows(rows);
 
   // Add form
   const [year, setYear] = useState<string>("L100");
@@ -1925,7 +1941,7 @@ function ResourcesAdminPanel() {
     });
     setAdding(false);
     if (error) { toast.error(error.message); return; }
-    toast.success("Folder added");
+    toast.success("Resource added");
     setLabel(""); setDriveUrl("");
     invalidate();
   };
@@ -1946,10 +1962,27 @@ function ResourcesAdminPanel() {
   };
 
   const remove = async (id: string) => {
-    if (!confirm("Remove this folder link?") || !supabase) return;
+    if (!confirm("Remove this resource?") || !supabase) return;
     const { error } = await supabase.from("resources").delete().eq("id", id);
     if (error) { toast.error(error.message); return; }
     toast.success("Removed");
+    invalidate();
+  };
+
+  // Move within same year+semester group
+  const move = async (id: string, direction: "up" | "down") => {
+    if (!supabase) return;
+    const row = sorted.find((r) => r.id === id);
+    if (!row) return;
+    const group = sorted.filter((r) => r.year === row.year && r.semester === row.semester);
+    const gi = group.findIndex((r) => r.id === id);
+    const swapGi = direction === "up" ? gi - 1 : gi + 1;
+    if (swapGi < 0 || swapGi >= group.length) return;
+    const swap = group[swapGi];
+    await Promise.all([
+      supabase.from("resources").update({ display_order: swap.display_order }).eq("id", row.id),
+      supabase.from("resources").update({ display_order: row.display_order }).eq("id", swap.id),
+    ]);
     invalidate();
   };
 
@@ -1959,6 +1992,7 @@ function ResourcesAdminPanel() {
         <h2 className="font-display text-lg font-semibold">Add a Google Drive folder</h2>
         <p className="text-sm text-muted-foreground">
           Each entry appears as a card on the public Resources page, filtered by year and semester.
+          Resources are displayed L100 → L400, 1st → 2nd semester. Use the arrows to reorder within a group.
         </p>
         <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
           <div>
@@ -1983,23 +2017,25 @@ function ResourcesAdminPanel() {
           </div>
           <div className="sm:col-span-2">
             <Label>Label (shown on the card)</Label>
-            <Input className="mt-1" value={label} onChange={(e) => setLabel(e.target.value)} required placeholder="e.g. L100 2nd Semester Slides" />
+            <Input className="mt-1" value={label} onChange={(e) => setLabel(e.target.value)} required placeholder="e.g. L100 1st Semester Study Materials" />
           </div>
           <div className="sm:col-span-2">
             <Label>Google Drive URL</Label>
             <Input className="mt-1" type="url" value={driveUrl} onChange={(e) => setDriveUrl(e.target.value)} required placeholder="https://drive.google.com/drive/folders/..." />
           </div>
           <Button type="submit" disabled={adding} className="sm:col-span-2 w-full sm:w-auto">
-            {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add folder"}
+            {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add resource"}
           </Button>
         </form>
       </section>
 
       <section>
-        <h3 className="font-medium mb-3">Current folders ({rows.length})</h3>
+        <h3 className="font-medium mb-3">Current resources ({sorted.length})</h3>
         <ul className="space-y-2">
-          {rows.map((row) =>
-            editingId === row.id ? (
+          {sorted.map((row) => {
+            const group = sorted.filter((r) => r.year === row.year && r.semester === row.semester);
+            const gi = group.findIndex((r) => r.id === row.id);
+            return editingId === row.id ? (
               <li key={row.id} className="card-nature p-4 rounded-xl border-2 border-primary/20">
                 <form onSubmit={saveEdit} className="grid gap-3 sm:grid-cols-2">
                   <div>
@@ -2039,7 +2075,26 @@ function ResourcesAdminPanel() {
                 </form>
               </li>
             ) : (
-              <li key={row.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
+              <li key={row.id} className="flex flex-wrap items-center gap-2 card-nature p-3 rounded-xl text-sm">
+                {/* Reorder arrows — only active within same year+semester group */}
+                <div className="flex flex-col gap-0.5">
+                  <Button
+                    type="button" variant="ghost" size="icon"
+                    className="h-5 w-5 text-muted-foreground disabled:opacity-20"
+                    disabled={gi === 0}
+                    onClick={() => move(row.id, "up")}
+                  >
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    type="button" variant="ghost" size="icon"
+                    className="h-5 w-5 text-muted-foreground disabled:opacity-20"
+                    disabled={gi === group.length - 1}
+                    onClick={() => move(row.id, "down")}
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
                 <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">{row.year}</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{row.semester} Sem</span>
                 <span className="flex-1 font-medium">{row.label}</span>
@@ -2053,8 +2108,8 @@ function ResourcesAdminPanel() {
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
               </li>
-            )
-          )}
+            );
+          })}
         </ul>
       </section>
     </div>
