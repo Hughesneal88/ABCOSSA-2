@@ -486,6 +486,8 @@ export default function AdminContentPage() {
   );
 }
 
+type InternshipRow = { id: string; title: string; organization: string; location: string | null; timeframe: string | null; deadline: string | null; description: string; apply_url: string | null; tags: string[]; is_published: boolean; cover_image_url: string | null; logo_url: string | null };
+
 function InternshipsAdminPanel() {
   const qc = useQueryClient();
   const { data: rows = [], refetch } = useQuery({
@@ -494,7 +496,7 @@ function InternshipsAdminPanel() {
       if (!supabase) return [];
       const { data, error } = await supabase.from("internships").select("*").order("created_at", { ascending: false });
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as InternshipRow[];
     },
   });
 
@@ -511,13 +513,71 @@ function InternshipsAdminPanel() {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const uploadFile = async (file: File, prefix: string) => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editOrg, setEditOrg] = useState("");
+  const [editLoc, setEditLoc] = useState("");
+  const [editTimeframe, setEditTimeframe] = useState("");
+  const [editDeadline, setEditDeadline] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editApplyUrl, setEditApplyUrl] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [editCoverFile, setEditCoverFile] = useState<File | null>(null);
+  const [editLogoFile, setEditLogoFile] = useState<File | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+
+  const startEdit = (r: InternshipRow) => {
+    setEditingId(r.id);
+    setEditTitle(r.title);
+    setEditOrg(r.organization);
+    setEditLoc(r.location ?? "");
+    setEditTimeframe(r.timeframe ?? "");
+    setEditDeadline(r.deadline ?? "");
+    setEditDesc(r.description);
+    setEditApplyUrl(r.apply_url ?? "");
+    setEditTags((r.tags ?? []).join(", "));
+    setEditCoverFile(null);
+    setEditLogoFile(null);
+  };
+
+  const uploadIntFile = async (file: File, prefix: string) => {
     if (!supabase) return null;
     const ext = file.name.split(".").pop() || "jpg";
     const path = `${prefix}-${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from("internship-images").upload(path, file, { upsert: false });
     if (error) throw error;
     return supabase.storage.from("internship-images").getPublicUrl(path).data.publicUrl;
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !editingId) return;
+    setEditSaving(true);
+    const patch: Record<string, unknown> = {
+      title: editTitle.trim(),
+      organization: editOrg.trim(),
+      location: editLoc.trim() || null,
+      timeframe: editTimeframe.trim() || null,
+      deadline: editDeadline.trim() || null,
+      description: editDesc.trim(),
+      apply_url: editApplyUrl.trim() || null,
+      tags: editTags.split(",").map((t) => t.trim()).filter(Boolean),
+    };
+    try {
+      if (editCoverFile) patch.cover_image_url = await uploadIntFile(editCoverFile, "cover");
+      if (editLogoFile) patch.logo_url = await uploadIntFile(editLogoFile, "logo");
+    } catch (err) {
+      setEditSaving(false);
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+      return;
+    }
+    const { error } = await supabase.from("internships").update(patch).eq("id", editingId);
+    setEditSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Internship updated");
+    setEditingId(null);
+    invalidateAll(qc);
+    refetch();
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -527,8 +587,8 @@ function InternshipsAdminPanel() {
     let coverImageUrl: string | null = null;
     let logoUrl: string | null = null;
     try {
-      if (coverFile) coverImageUrl = await uploadFile(coverFile, "cover");
-      if (logoFile) logoUrl = await uploadFile(logoFile, "logo");
+      if (coverFile) coverImageUrl = await uploadIntFile(coverFile, "cover");
+      if (logoFile) logoUrl = await uploadIntFile(logoFile, "logo");
     } catch (err) {
       setSaving(false);
       toast.error(err instanceof Error ? err.message : "Upload failed");
@@ -536,17 +596,10 @@ function InternshipsAdminPanel() {
     }
     const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
     const { error } = await supabase.from("internships").insert({
-      title: title.trim(),
-      organization: organization.trim(),
-      location: location.trim() || null,
-      timeframe: timeframe.trim() || null,
-      deadline: deadline.trim() || null,
-      description: description.trim(),
-      apply_url: applyUrl.trim() || null,
-      tags: tagList,
-      is_published: published,
-      cover_image_url: coverImageUrl,
-      logo_url: logoUrl,
+      title: title.trim(), organization: organization.trim(), location: location.trim() || null,
+      timeframe: timeframe.trim() || null, deadline: deadline.trim() || null,
+      description: description.trim(), apply_url: applyUrl.trim() || null,
+      tags: tagList, is_published: published, cover_image_url: coverImageUrl, logo_url: logoUrl,
     });
     setSaving(false);
     if (error) { toast.error(error.message); return; }
@@ -554,29 +607,21 @@ function InternshipsAdminPanel() {
     setTitle(""); setOrganization(""); setLocation(""); setTimeframe("");
     setDeadline(""); setDescription(""); setApplyUrl(""); setTags("");
     setCoverFile(null); setLogoFile(null);
-    invalidateAll(qc);
-    refetch();
+    invalidateAll(qc); refetch();
   };
 
   const remove = async (id: string) => {
     if (!confirm("Remove this internship listing?") || !supabase) return;
     const { error } = await supabase.from("internships").delete().eq("id", id);
     if (error) toast.error(error.message);
-    else {
-      toast.success("Removed");
-      invalidateAll(qc);
-      refetch();
-    }
+    else { toast.success("Removed"); invalidateAll(qc); refetch(); }
   };
 
   const togglePub = async (id: string, next: boolean) => {
     if (!supabase) return;
     const { error } = await supabase.from("internships").update({ is_published: next }).eq("id", id);
     if (error) toast.error(error.message);
-    else {
-      invalidateAll(qc);
-      refetch();
-    }
+    else { invalidateAll(qc); refetch(); }
   };
 
   return (
@@ -642,23 +687,82 @@ function InternshipsAdminPanel() {
       <section>
         <h3 className="font-medium mb-3">Current listings</h3>
         <ul className="space-y-2">
-          {(rows as { id: string; title: string; is_published: boolean }[]).map((r) => (
-            <li key={r.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
-              <span className="flex-1 font-medium">{r.title}</span>
-              <div className="flex items-center gap-2">
-                <Switch checked={r.is_published} onCheckedChange={(c) => togglePub(r.id, c)} />
-                <span className="text-muted-foreground text-xs">Visible</span>
-              </div>
-              <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(r.id)}>
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </li>
-          ))}
+          {rows.map((r) =>
+            editingId === r.id ? (
+              <li key={r.id} className="card-nature p-4 rounded-xl border-2 border-primary/20">
+                <form onSubmit={saveEdit} className="grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Role title</Label>
+                    <Input className="mt-1" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Host organization</Label>
+                    <Input className="mt-1" value={editOrg} onChange={(e) => setEditOrg(e.target.value)} required />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Location</Label>
+                    <Input className="mt-1" value={editLoc} onChange={(e) => setEditLoc(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">When</Label>
+                    <Input className="mt-1" value={editTimeframe} onChange={(e) => setEditTimeframe(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Apply-by date</Label>
+                    <Input className="mt-1" type="date" value={editDeadline} onChange={(e) => setEditDeadline(e.target.value)} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Description</Label>
+                    <Textarea className="mt-1 min-h-[80px]" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} required />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Application link (optional)</Label>
+                    <Input className="mt-1" type="url" value={editApplyUrl} onChange={(e) => setEditApplyUrl(e.target.value)} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Tags (comma-separated)</Label>
+                    <Input className="mt-1" value={editTags} onChange={(e) => setEditTags(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Replace cover image (optional)</Label>
+                    <Input className="mt-1" type="file" accept="image/*" onChange={(e) => setEditCoverFile(e.target.files?.[0] ?? null)} />
+                    {r.cover_image_url && !editCoverFile && <p className="text-xs text-muted-foreground mt-1">Current image kept unless replaced.</p>}
+                  </div>
+                  <div>
+                    <Label className="text-xs">Replace organisation logo (optional)</Label>
+                    <Input className="mt-1" type="file" accept="image/*" onChange={(e) => setEditLogoFile(e.target.files?.[0] ?? null)} />
+                    {r.logo_url && !editLogoFile && <p className="text-xs text-muted-foreground mt-1">Current logo kept unless replaced.</p>}
+                  </div>
+                  <div className="sm:col-span-2 flex gap-2">
+                    <Button type="submit" size="sm" disabled={editSaving}>
+                      {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
+                  </div>
+                </form>
+              </li>
+            ) : (
+              <li key={r.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
+                <span className="flex-1 font-medium">{r.title}</span>
+                <span className="text-xs text-muted-foreground">{r.organization}</span>
+                <Button type="button" variant="ghost" size="sm" className="text-xs h-7" onClick={() => startEdit(r)}>Edit</Button>
+                <div className="flex items-center gap-2">
+                  <Switch checked={r.is_published} onCheckedChange={(c) => togglePub(r.id, c)} />
+                  <span className="text-muted-foreground text-xs">Visible</span>
+                </div>
+                <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(r.id)}>
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </li>
+            )
+          )}
         </ul>
       </section>
     </div>
   );
 }
+
+type EventRow = { id: string; title: string; event_type: string; location: string | null; starts_at: string; ends_at: string | null; description: string | null; register_url: string | null; featured: boolean; is_published: boolean; cover_image_url: string | null };
 
 function EventsAdminPanel() {
   const qc = useQueryClient();
@@ -668,7 +772,7 @@ function EventsAdminPanel() {
       if (!supabase) return [];
       const { data, error } = await supabase.from("events").select("*").order("starts_at", { ascending: false });
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as EventRow[];
     },
   });
 
@@ -684,55 +788,107 @@ function EventsAdminPanel() {
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editType, setEditType] = useState("Workshop");
+  const [editLoc, setEditLoc] = useState("");
+  const [editStarts, setEditStarts] = useState("");
+  const [editEnds, setEditEnds] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [editRegUrl, setEditRegUrl] = useState("");
+  const [editFeatured, setEditFeatured] = useState(false);
+  const [editCoverFile, setEditCoverFile] = useState<File | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+
+  const toDatetimeLocal = (iso: string | null) => {
+    if (!iso) return "";
+    return new Date(iso).toISOString().slice(0, 16);
+  };
+
+  const startEdit = (r: EventRow) => {
+    setEditingId(r.id);
+    setEditTitle(r.title);
+    setEditType(r.event_type);
+    setEditLoc(r.location ?? "");
+    setEditStarts(toDatetimeLocal(r.starts_at));
+    setEditEnds(toDatetimeLocal(r.ends_at));
+    setEditDesc(r.description ?? "");
+    setEditRegUrl(r.register_url ?? "");
+    setEditFeatured(r.featured);
+    setEditCoverFile(null);
+  };
+
+  const uploadEventCover = async (file: File) => {
+    if (!supabase) return null;
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `cover-${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from("event-images").upload(path, file, { upsert: false });
+    if (error) throw error;
+    return supabase.storage.from("event-images").getPublicUrl(path).data.publicUrl;
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !editingId) return;
+    setEditSaving(true);
+    let coverImageUrl: string | undefined = undefined;
+    if (editCoverFile) {
+      try { coverImageUrl = await uploadEventCover(editCoverFile) ?? undefined; }
+      catch (err) { setEditSaving(false); toast.error(err instanceof Error ? err.message : "Upload failed"); return; }
+    }
+    const patch: Record<string, unknown> = {
+      title: editTitle.trim(),
+      event_type: editType,
+      location: editLoc.trim() || null,
+      starts_at: new Date(editStarts).toISOString(),
+      ends_at: editEnds.trim() ? new Date(editEnds).toISOString() : null,
+      description: editDesc.trim() || null,
+      register_url: editRegUrl.trim() || null,
+      featured: editFeatured,
+    };
+    if (coverImageUrl !== undefined) patch.cover_image_url = coverImageUrl;
+    const { error } = await supabase.from("events").update(patch).eq("id", editingId);
+    setEditSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Event updated");
+    setEditingId(null);
+    invalidateAll(qc);
+    refetch();
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) return;
     setSaving(true);
     let coverImageUrl: string | null = null;
     if (coverFile) {
-      const ext = coverFile.name.split(".").pop() || "jpg";
-      const path = `cover-${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("event-images").upload(path, coverFile, { upsert: false });
-      if (upErr) { setSaving(false); toast.error(upErr.message); return; }
-      coverImageUrl = supabase.storage.from("event-images").getPublicUrl(path).data.publicUrl;
+      try { coverImageUrl = await uploadEventCover(coverFile); }
+      catch (err) { setSaving(false); toast.error(err instanceof Error ? err.message : "Upload failed"); return; }
     }
     const { error } = await supabase.from("events").insert({
-      title: title.trim(),
-      event_type: eventType,
-      location: loc.trim() || null,
-      starts_at: new Date(starts).toISOString(),
-      ends_at: ends.trim() ? new Date(ends).toISOString() : null,
-      description: desc.trim() || null,
-      register_url: regUrl.trim() || null,
-      featured,
-      is_published: published,
-      cover_image_url: coverImageUrl,
+      title: title.trim(), event_type: eventType, location: loc.trim() || null,
+      starts_at: new Date(starts).toISOString(), ends_at: ends.trim() ? new Date(ends).toISOString() : null,
+      description: desc.trim() || null, register_url: regUrl.trim() || null,
+      featured, is_published: published, cover_image_url: coverImageUrl,
     });
     setSaving(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Event added");
-    setTitle(""); setLoc(""); setStarts(""); setEnds("");
-    setDesc(""); setRegUrl(""); setFeatured(false); setCoverFile(null);
-    invalidateAll(qc);
-    refetch();
+    setTitle(""); setLoc(""); setStarts(""); setEnds(""); setDesc(""); setRegUrl(""); setFeatured(false); setCoverFile(null);
+    invalidateAll(qc); refetch();
   };
 
   const remove = async (id: string) => {
     if (!confirm("Delete this event?") || !supabase) return;
     const { error } = await supabase.from("events").delete().eq("id", id);
     if (error) toast.error(error.message);
-    else {
-      toast.success("Deleted");
-      invalidateAll(qc);
-      refetch();
-    }
+    else { toast.success("Deleted"); invalidateAll(qc); refetch(); }
   };
 
   const togglePub = async (id: string, next: boolean) => {
     if (!supabase) return;
     await supabase.from("events").update({ is_published: next }).eq("id", id);
-    invalidateAll(qc);
-    refetch();
+    invalidateAll(qc); refetch();
   };
 
   return (
@@ -747,15 +903,9 @@ function EventsAdminPanel() {
           <div>
             <Label>Type</Label>
             <Select value={eventType} onValueChange={setEventType}>
-              <SelectTrigger className="mt-1">
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {["Workshop", "Seminar", "Conference", "Outreach", "Social", "Other"].map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t}
-                  </SelectItem>
-                ))}
+                {["Workshop", "Seminar", "Conference", "Outreach", "Social", "Other"].map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -799,22 +949,82 @@ function EventsAdminPanel() {
       </section>
 
       <ul className="space-y-2">
-        {(rows as { id: string; title: string; starts_at: string; is_published: boolean }[]).map((r) => (
-          <li key={r.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
-            <span className="flex-1">
-              <span className="font-medium">{r.title}</span>
-              <span className="text-muted-foreground ml-2 text-xs">{new Date(r.starts_at).toLocaleString()}</span>
-            </span>
-            <Switch checked={r.is_published} onCheckedChange={(c) => togglePub(r.id, c)} />
-            <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(r.id)}>
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </li>
-        ))}
+        {rows.map((r) =>
+          editingId === r.id ? (
+            <li key={r.id} className="card-nature p-4 rounded-xl border-2 border-primary/20">
+              <form onSubmit={saveEdit} className="grid gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <Label className="text-xs">Event name</Label>
+                  <Input className="mt-1" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+                </div>
+                <div>
+                  <Label className="text-xs">Type</Label>
+                  <Select value={editType} onValueChange={setEditType}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {["Workshop", "Seminar", "Conference", "Outreach", "Social", "Other"].map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Location</Label>
+                  <Input className="mt-1" value={editLoc} onChange={(e) => setEditLoc(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Starts</Label>
+                  <Input className="mt-1" type="datetime-local" value={editStarts} onChange={(e) => setEditStarts(e.target.value)} required />
+                </div>
+                <div>
+                  <Label className="text-xs">Ends (optional)</Label>
+                  <Input className="mt-1" type="datetime-local" value={editEnds} onChange={(e) => setEditEnds(e.target.value)} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs">Details</Label>
+                  <Textarea className="mt-1" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs">Sign-up link (optional)</Label>
+                  <Input className="mt-1" type="url" value={editRegUrl} onChange={(e) => setEditRegUrl(e.target.value)} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-xs">Replace cover image (optional)</Label>
+                  <Input className="mt-1" type="file" accept="image/*" onChange={(e) => setEditCoverFile(e.target.files?.[0] ?? null)} />
+                  {r.cover_image_url && !editCoverFile && (
+                    <p className="text-xs text-muted-foreground mt-1">Current image kept unless you upload a new one.</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch id="edit-ev-feat" checked={editFeatured} onCheckedChange={setEditFeatured} />
+                  <Label htmlFor="edit-ev-feat" className="text-xs">Featured</Label>
+                </div>
+                <div className="sm:col-span-2 flex gap-2">
+                  <Button type="submit" size="sm" disabled={editSaving}>
+                    {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
+                </div>
+              </form>
+            </li>
+          ) : (
+            <li key={r.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
+              <span className="flex-1">
+                <span className="font-medium">{r.title}</span>
+                <span className="text-muted-foreground ml-2 text-xs">{new Date(r.starts_at).toLocaleString()}</span>
+              </span>
+              <Button type="button" variant="ghost" size="sm" className="text-xs h-7" onClick={() => startEdit(r)}>Edit</Button>
+              <Switch checked={r.is_published} onCheckedChange={(c) => togglePub(r.id, c)} />
+              <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(r.id)}>
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </li>
+          )
+        )}
       </ul>
     </div>
   );
 }
+
+type AnnouncementRow = { id: string; title: string; body: string; link_url: string | null; is_published: boolean };
 
 function AnnouncementsAdminPanel() {
   const qc = useQueryClient();
@@ -824,7 +1034,7 @@ function AnnouncementsAdminPanel() {
       if (!supabase) return [];
       const { data, error } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as AnnouncementRow[];
     },
   });
 
@@ -833,6 +1043,36 @@ function AnnouncementsAdminPanel() {
   const [linkUrl, setLinkUrl] = useState("");
   const [published, setPublished] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [editLinkUrl, setEditLinkUrl] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const startEdit = (r: AnnouncementRow) => {
+    setEditingId(r.id);
+    setEditTitle(r.title);
+    setEditBody(r.body);
+    setEditLinkUrl(r.link_url ?? "");
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !editingId) return;
+    setEditSaving(true);
+    const { error } = await supabase.from("announcements").update({
+      title: editTitle.trim(),
+      body: editBody.trim(),
+      link_url: editLinkUrl.trim() || null,
+    }).eq("id", editingId);
+    setEditSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Updated");
+    setEditingId(null);
+    invalidateAll(qc);
+    refetch();
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -845,14 +1085,9 @@ function AnnouncementsAdminPanel() {
       is_published: published,
     });
     setSaving(false);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
+    if (error) { toast.error(error.message); return; }
     toast.success("Announcement posted");
-    setTitle("");
-    setBody("");
-    setLinkUrl("");
+    setTitle(""); setBody(""); setLinkUrl("");
     invalidateAll(qc);
     refetch();
   };
@@ -900,19 +1135,47 @@ function AnnouncementsAdminPanel() {
       </section>
 
       <ul className="space-y-2">
-        {(rows as { id: string; title: string; is_published: boolean }[]).map((r) => (
-          <li key={r.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
-            <span className="flex-1 font-medium">{r.title}</span>
-            <Switch checked={r.is_published} onCheckedChange={(c) => togglePub(r.id, c)} />
-            <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(r.id)}>
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </li>
-        ))}
+        {rows.map((r) =>
+          editingId === r.id ? (
+            <li key={r.id} className="card-nature p-4 rounded-xl border-2 border-primary/20">
+              <form onSubmit={saveEdit} className="space-y-3 max-w-2xl">
+                <div>
+                  <Label className="text-xs">Headline</Label>
+                  <Input className="mt-1" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+                </div>
+                <div>
+                  <Label className="text-xs">Message</Label>
+                  <Textarea className="mt-1 min-h-[100px]" value={editBody} onChange={(e) => setEditBody(e.target.value)} required />
+                </div>
+                <div>
+                  <Label className="text-xs">Extra link (optional)</Label>
+                  <Input className="mt-1" type="url" value={editLinkUrl} onChange={(e) => setEditLinkUrl(e.target.value)} />
+                </div>
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" disabled={editSaving}>
+                    {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
+                </div>
+              </form>
+            </li>
+          ) : (
+            <li key={r.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
+              <span className="flex-1 font-medium">{r.title}</span>
+              <Button type="button" variant="ghost" size="sm" className="text-xs h-7" onClick={() => startEdit(r)}>Edit</Button>
+              <Switch checked={r.is_published} onCheckedChange={(c) => togglePub(r.id, c)} />
+              <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(r.id)}>
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </li>
+          )
+        )}
       </ul>
     </div>
   );
 }
+
+type BlogRow = { id: string; title: string; slug: string; category: string; excerpt: string | null; body: string; is_published: boolean; published_at: string; cover_image_url: string | null };
 
 function BlogAdminPanel({ userId }: { userId: string }) {
   const qc = useQueryClient();
@@ -922,7 +1185,7 @@ function BlogAdminPanel({ userId }: { userId: string }) {
       if (!supabase) return [];
       const { data, error } = await supabase.from("blog_posts").select("*").order("published_at", { ascending: false });
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as BlogRow[];
     },
   });
 
@@ -934,6 +1197,51 @@ function BlogAdminPanel({ userId }: { userId: string }) {
   const [pubDate, setPubDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editCategory, setEditCategory] = useState("News");
+  const [editExcerpt, setEditExcerpt] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [editPubDate, setEditPubDate] = useState("");
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+
+  const startEdit = (r: BlogRow) => {
+    setEditingId(r.id);
+    setEditTitle(r.title);
+    setEditCategory(r.category);
+    setEditExcerpt(r.excerpt ?? "");
+    setEditBody(r.body);
+    setEditPubDate(r.published_at ? r.published_at.slice(0, 10) : new Date().toISOString().slice(0, 10));
+    setEditFile(null);
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !editingId) return;
+    setEditSaving(true);
+    const patch: Record<string, unknown> = {
+      title: editTitle.trim(),
+      category: editCategory,
+      excerpt: editExcerpt.trim() || null,
+      body: editBody.trim(),
+      published_at: new Date(editPubDate + "T12:00:00").toISOString(),
+    };
+    if (editFile) {
+      const ext = editFile.name.split(".").pop() || "jpg";
+      const path = `${userId}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("blog-covers").upload(path, editFile, { upsert: false });
+      if (upErr) { setEditSaving(false); toast.error(upErr.message); return; }
+      patch.cover_image_url = supabase.storage.from("blog-covers").getPublicUrl(path).data.publicUrl;
+    }
+    const { error } = await supabase.from("blog_posts").update(patch).eq("id", editingId);
+    setEditSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Article updated");
+    setEditingId(null);
+    invalidateAll(qc); refetch();
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1064,23 +1372,62 @@ function BlogAdminPanel({ userId }: { userId: string }) {
       </section>
 
       <ul className="space-y-2">
-        {(rows as { id: string; title: string; slug: string; is_published: boolean }[]).map((r) => (
-          <li key={r.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
-            <span className="flex-1 font-medium">{r.title}</span>
-            <Link
-              to={`/news/${r.slug}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary text-xs underline"
-            >
-              View
-            </Link>
-            <Switch checked={r.is_published} onCheckedChange={(c) => togglePub(r.id, c)} />
-            <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(r.id)}>
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </li>
-        ))}
+        {rows.map((r) =>
+          editingId === r.id ? (
+            <li key={r.id} className="card-nature p-4 rounded-xl border-2 border-primary/20">
+              <form onSubmit={saveEdit} className="space-y-3 max-w-2xl">
+                <div>
+                  <Label className="text-xs">Story title</Label>
+                  <Input className="mt-1" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} required />
+                </div>
+                <div>
+                  <Label className="text-xs">Category</Label>
+                  <Select value={editCategory} onValueChange={setEditCategory}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {["News", "Events", "Research", "Community", "Partnership", "Announcement"].map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Short summary (optional)</Label>
+                  <Textarea className="mt-1" rows={2} value={editExcerpt} onChange={(e) => setEditExcerpt(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Article body</Label>
+                  <Textarea className="mt-1 min-h-[160px]" value={editBody} onChange={(e) => setEditBody(e.target.value)} required />
+                </div>
+                <div>
+                  <Label className="text-xs">Replace cover photo (optional)</Label>
+                  <Input className="mt-1" type="file" accept="image/*" onChange={(e) => setEditFile(e.target.files?.[0] ?? null)} />
+                  {r.cover_image_url && !editFile && <p className="text-xs text-muted-foreground mt-1">Current cover kept unless replaced.</p>}
+                </div>
+                <div>
+                  <Label className="text-xs">Publication date</Label>
+                  <Input className="mt-1" type="date" value={editPubDate} onChange={(e) => setEditPubDate(e.target.value)} />
+                </div>
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm" disabled={editSaving}>
+                    {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
+                </div>
+              </form>
+            </li>
+          ) : (
+            <li key={r.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
+              <span className="flex-1 font-medium">{r.title}</span>
+              <Link to={`/news/${r.slug}`} target="_blank" rel="noreferrer" className="text-primary text-xs underline">View</Link>
+              <Button type="button" variant="ghost" size="sm" className="text-xs h-7" onClick={() => startEdit(r)}>Edit</Button>
+              <Switch checked={r.is_published} onCheckedChange={(c) => togglePub(r.id, c)} />
+              <Button type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => remove(r.id)}>
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </li>
+          )
+        )}
       </ul>
     </div>
   );
@@ -2292,6 +2639,61 @@ function ResearchAdminPanel({ userId }: { userId: string }) {
     refetchWorks();
   };
 
+  const [editWorkId, setEditWorkId] = useState<string | null>(null);
+  const [ewTitle, setEwTitle] = useState("");
+  const [ewAuthorName, setEwAuthorName] = useState("");
+  const [ewAuthorType, setEwAuthorType] = useState("student");
+  const [ewCategory, setEwCategory] = useState("Paper");
+  const [ewAbstract, setEwAbstract] = useState("");
+  const [ewYear, setEwYear] = useState("");
+  const [ewLinkUrl, setEwLinkUrl] = useState("");
+  const [ewTags, setEwTags] = useState("");
+  const [ewFile, setEwFile] = useState<File | null>(null);
+  const [ewSaving, setEwSaving] = useState(false);
+
+  const startEditWork = (w: ResearchWorkRow) => {
+    setEditWorkId(w.id);
+    setEwTitle(w.title);
+    setEwAuthorName(w.author_name);
+    setEwAuthorType(w.author_type);
+    setEwCategory(w.category);
+    setEwAbstract(w.abstract ?? "");
+    setEwYear(w.year ? String(w.year) : "");
+    setEwLinkUrl(w.link_url ?? "");
+    setEwTags((w.tags ?? []).join(", "));
+    setEwFile(null);
+  };
+
+  const saveEditWork = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !editWorkId) return;
+    setEwSaving(true);
+    const patch: Record<string, unknown> = {
+      title: ewTitle.trim(),
+      author_name: ewAuthorName.trim(),
+      author_type: ewAuthorType,
+      category: ewCategory,
+      abstract: ewAbstract.trim() || null,
+      year: ewYear ? parseInt(ewYear, 10) : null,
+      link_url: ewLinkUrl.trim() || null,
+      tags: ewTags.split(",").map((t) => t.trim()).filter(Boolean),
+    };
+    if (ewFile) {
+      const ext = ewFile.name.split(".").pop() || "pdf";
+      const path = `${userId}/${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("research-files").upload(path, ewFile, { upsert: false });
+      if (upErr) { setEwSaving(false); toast.error(upErr.message); return; }
+      patch.file_url = supabase.storage.from("research-files").getPublicUrl(path).data.publicUrl;
+    }
+    const { error } = await supabase.from("research_works").update(patch).eq("id", editWorkId);
+    setEwSaving(false);
+    if (error) { toast.error(error.message); return; }
+    toast.success("Work updated");
+    setEditWorkId(null);
+    qc.invalidateQueries({ queryKey: ["research-works-public"] });
+    refetchWorks();
+  };
+
   const [title, setTitle] = useState("");
   const [authorName, setAuthorName] = useState("");
   const [authorType, setAuthorType] = useState("student");
@@ -2587,22 +2989,85 @@ function ResearchAdminPanel({ userId }: { userId: string }) {
       <section className="space-y-3">
         <h2 className="font-display text-lg font-semibold">Published ({publishedWorks.length})</h2>
         <ul className="space-y-2">
-          {publishedWorks.map((w) => (
-            <li key={w.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
-              <span className="flex-1">
-                <span className="font-medium">{w.title}</span>
-                <span className="text-muted-foreground ml-2 text-xs">
-                  {w.category}{w.year ? `, ${w.year}` : ""} — {w.author_name}
+          {publishedWorks.map((w) =>
+            editWorkId === w.id ? (
+              <li key={w.id} className="card-nature p-4 rounded-xl border-2 border-primary/20">
+                <form onSubmit={saveEditWork} className="grid gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Title</Label>
+                    <Input className="mt-1" value={ewTitle} onChange={(e) => setEwTitle(e.target.value)} required />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Author name</Label>
+                    <Input className="mt-1" value={ewAuthorName} onChange={(e) => setEwAuthorName(e.target.value)} required />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Author type</Label>
+                    <Select value={ewAuthorType} onValueChange={setEwAuthorType}>
+                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="student">Student</SelectItem>
+                        <SelectItem value="graduate">Graduate / alumni</SelectItem>
+                        <SelectItem value="lecturer">Lecturer / researcher</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Category</Label>
+                    <Select value={ewCategory} onValueChange={setEwCategory}>
+                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {RESEARCH_CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Year</Label>
+                    <Input className="mt-1" type="number" value={ewYear} onChange={(e) => setEwYear(e.target.value)} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Abstract</Label>
+                    <Textarea className="mt-1" value={ewAbstract} onChange={(e) => setEwAbstract(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">External link (optional)</Label>
+                    <Input className="mt-1" type="url" value={ewLinkUrl} onChange={(e) => setEwLinkUrl(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Tags (comma-separated)</Label>
+                    <Input className="mt-1" value={ewTags} onChange={(e) => setEwTags(e.target.value)} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Replace file (optional)</Label>
+                    <Input className="mt-1" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx" onChange={(e) => setEwFile(e.target.files?.[0] ?? null)} />
+                    {w.file_url && !ewFile && <p className="text-xs text-muted-foreground mt-1">Current file kept unless replaced.</p>}
+                  </div>
+                  <div className="sm:col-span-2 flex gap-2">
+                    <Button type="submit" size="sm" disabled={ewSaving}>
+                      {ewSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditWorkId(null)}>Cancel</Button>
+                  </div>
+                </form>
+              </li>
+            ) : (
+              <li key={w.id} className="flex flex-wrap items-center gap-3 card-nature p-3 rounded-xl text-sm">
+                <span className="flex-1">
+                  <span className="font-medium">{w.title}</span>
+                  <span className="text-muted-foreground ml-2 text-xs">
+                    {w.category}{w.year ? `, ${w.year}` : ""} — {w.author_name}
+                  </span>
                 </span>
-              </span>
-              <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={() => approveWork(w.id, false)}>
-                Unpublish
-              </Button>
-              <Button type="button" variant="ghost" size="icon" className="text-destructive h-7 w-7" onClick={() => removeWork(w.id)}>
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
-            </li>
-          ))}
+                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => startEditWork(w)}>Edit</Button>
+                <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={() => approveWork(w.id, false)}>
+                  Unpublish
+                </Button>
+                <Button type="button" variant="ghost" size="icon" className="text-destructive h-7 w-7" onClick={() => removeWork(w.id)}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </li>
+            )
+          )}
         </ul>
       </section>
     </div>
