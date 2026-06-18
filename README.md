@@ -17,7 +17,7 @@ Website for the Animal Biology and Conservation Science Student Association (ABC
 git clone <YOUR_GIT_URL>
 
 # Navigate to the project directory
-cd abcossa-connect
+cd ABCOSSA-2
 
 # Install dependencies
 npm install
