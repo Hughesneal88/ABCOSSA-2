@@ -4,6 +4,7 @@ import { CONTACT, RESOURCES_TELEGRAM_URL, SOCIAL } from "@/config/site";
 
 const footerLinks = {
   quickLinks: [
+    { name: "Nominees & Awards", href: "/nominees" },
     { name: "Blog & Articles", href: "/news" },
     { name: "Events", href: "/events" },
     { name: "Research", href: "/research" },

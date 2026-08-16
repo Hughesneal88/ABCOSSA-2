@@ -19,7 +19,13 @@ import {
   FolderOpen,
   ChevronUp,
   ChevronDown,
+  Award,
+  CreditCard,
 } from "lucide-react";
+import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
+import type { AwardCategory, NomineeRow, NomineePdfUpload } from "@/hooks/useNominees";
+import { usePayments, useHubtelSettings, useUpdateHubtelSettings } from "@/hooks/usePayments";
+import { formatGHS, type PaymentRecord } from "@/lib/hubtelClient";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +51,11 @@ const invalidateAll = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ["blog-post"] });
   qc.invalidateQueries({ queryKey: ["lecturers"] });
   qc.invalidateQueries({ queryKey: ["research-works-public"] });
+  qc.invalidateQueries({ queryKey: ["nominees"] });
+  qc.invalidateQueries({ queryKey: ["nominee-pdfs"] });
+  qc.invalidateQueries({ queryKey: ["award-categories"] });
+  qc.invalidateQueries({ queryKey: ["admin-payments"] });
+  qc.invalidateQueries({ queryKey: ["hubtel-settings"] });
 };
 
 function AccountSettingsPanel({ user }: { user: User }) {
@@ -443,11 +454,27 @@ export default function AdminContentPage() {
               <BookOpen className="w-3.5 h-3.5" />
               Research
             </TabsTrigger>
+            <TabsTrigger value="nominees" className="gap-1.5">
+              <Award className="w-3.5 h-3.5" />
+              Nominees & Awards
+            </TabsTrigger>
+            <TabsTrigger value="payments" className="gap-1.5">
+              <CreditCard className="w-3.5 h-3.5" />
+              Payments & Finance
+            </TabsTrigger>
             <TabsTrigger value="account" className="gap-1.5">
               <KeyRound className="w-3.5 h-3.5" />
               Account
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="nominees">
+            <NomineesAdminPanel />
+          </TabsContent>
+
+          <TabsContent value="payments">
+            <PaymentsAdminPanel />
+          </TabsContent>
 
           <TabsContent value="account">
             <AccountSettingsPanel user={user} />
@@ -3069,6 +3096,803 @@ function ResearchAdminPanel({ userId }: { userId: string }) {
             )
           )}
         </ul>
+      </section>
+    </div>
+  );
+}
+
+function NomineesAdminPanel() {
+  const qc = useQueryClient();
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfTitle, setPdfTitle] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [parsedNominees, setParsedNominees] = useState<ParsedNominee[]>([]);
+  const [selectedDefaultCategory, setSelectedDefaultCategory] = useState<string>("none");
+  const [importing, setImporting] = useState(false);
+
+  // Category management
+  const [newCatTitle, setNewCatTitle] = useState("");
+  const [newCatDesc, setNewCatDesc] = useState("");
+  const [addingCat, setAddingCat] = useState(false);
+
+  // Manual Nominee Addition
+  const [manualName, setManualName] = useState("");
+  const [manualDept, setManualDept] = useState("");
+  const [manualLevel, setManualLevel] = useState("");
+  const [manualCatId, setManualCatId] = useState("none");
+  const [manualBio, setManualBio] = useState("");
+  const [addingNominee, setAddingNominee] = useState(false);
+
+  // Queries
+  const { data: categories = [], refetch: refetchCats } = useQuery<AwardCategory[]>({
+    queryKey: ["admin-award-categories"],
+    queryFn: async () => {
+      if (!supabase) return [];
+      const { data, error } = await supabase.from("award_categories").select("*").order("display_order");
+      if (error) throw error;
+      return (data as AwardCategory[]) ?? [];
+    },
+    enabled: isSupabaseConfigured,
+  });
+
+  const { data: nominees = [], refetch: refetchNominees } = useQuery<NomineeRow[]>({
+    queryKey: ["admin-nominees"],
+    queryFn: async () => {
+      if (!supabase) return [];
+      const { data, error } = await supabase.from("nominees").select("*").order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data as NomineeRow[]) ?? [];
+    },
+    enabled: isSupabaseConfigured,
+  });
+
+  const { data: pdfDocs = [], refetch: refetchPdfs } = useQuery<NomineePdfUpload[]>({
+    queryKey: ["admin-nominee-pdfs"],
+    queryFn: async () => {
+      if (!supabase) return [];
+      const { data, error } = await supabase.from("nominee_pdf_uploads").select("*").order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data as NomineePdfUpload[]) ?? [];
+    },
+    enabled: isSupabaseConfigured,
+  });
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPdfFile(file);
+    if (!pdfTitle) {
+      setPdfTitle(file.name.replace(/\.pdf$/i, ""));
+    }
+
+    setParsing(true);
+    try {
+      const res = await parsePDFNomineeFile(file);
+      setParsedNominees(res.nominees);
+      toast.success(`Extracted ${res.nominees.length} nominee entries from PDF!`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to parse PDF file");
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleUpdateParsedItem = (id: string, field: keyof ParsedNominee, val: string) => {
+    setParsedNominees((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [field]: val } : item))
+    );
+  };
+
+  const handleRemoveParsedItem = (id: string) => {
+    setParsedNominees((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleAddParsedRow = () => {
+    setParsedNominees((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        name: "",
+        department: "",
+        level: "",
+        bio: "",
+        category: selectedDefaultCategory !== "none" ? selectedDefaultCategory : "",
+      },
+    ]);
+  };
+
+  const handleBulkImport = async () => {
+    if (!supabase) return;
+    if (parsedNominees.length === 0) {
+      toast.error("No nominees to import.");
+      return;
+    }
+
+    setImporting(true);
+    try {
+      let fileUrl = "";
+      if (pdfFile) {
+        const cleanName = pdfFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const path = `${Date.now()}_${cleanName}`;
+        const { error: upErr } = await supabase.storage
+          .from("nominee-documents")
+          .upload(path, pdfFile, { upsert: false });
+
+        if (upErr) throw upErr;
+
+        const { data: pubData } = supabase.storage
+          .from("nominee-documents")
+          .getPublicUrl(path);
+        fileUrl = pubData.publicUrl;
+
+        await supabase.from("nominee_pdf_uploads").insert({
+          filename: pdfFile.name,
+          file_url: fileUrl,
+          title: pdfTitle || pdfFile.name,
+          parsed_count: parsedNominees.length,
+        });
+      }
+
+        const rowsToInsert = parsedNominees.map((n) => {
+          let categoryId: string | null = null;
+          if (selectedDefaultCategory && selectedDefaultCategory !== "none") {
+            categoryId = selectedDefaultCategory;
+          } else if (n.category) {
+            const match = categories.find((c) => c.title.toLowerCase() === n.category.toLowerCase() || c.id === n.category);
+            if (match) categoryId = match.id;
+          }
+
+          return {
+            name: n.name.trim(),
+            department: n.department ? n.department.trim() : null,
+            level: n.level ? n.level.trim() : null,
+            bio: n.bio ? n.bio.trim() : "",
+            category_id: categoryId,
+            source_pdf_url: fileUrl || null,
+            is_published: true,
+          };
+        });
+
+      const { error: insErr } = await supabase.from("nominees").insert(rowsToInsert);
+      if (insErr) throw insErr;
+
+      toast.success(`Successfully imported ${rowsToInsert.length} nominees!`);
+      setParsedNominees([]);
+      setPdfFile(null);
+      setPdfTitle("");
+      refetchNominees();
+      refetchPdfs();
+      qc.invalidateQueries({ queryKey: ["nominees"] });
+      qc.invalidateQueries({ queryKey: ["nominee-pdfs"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleAddCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !newCatTitle.trim()) return;
+    setAddingCat(true);
+    try {
+      const { error } = await supabase.from("award_categories").insert({
+        title: newCatTitle.trim(),
+        description: newCatDesc.trim() || null,
+        display_order: categories.length,
+      });
+      if (error) throw error;
+      toast.success("Category added");
+      setNewCatTitle("");
+      setNewCatDesc("");
+      refetchCats();
+      qc.invalidateQueries({ queryKey: ["award-categories"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to add category");
+    } finally {
+      setAddingCat(false);
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    if (!supabase || !confirm("Delete this category? Nominees under it will remain uncategorized.")) return;
+    const { error } = await supabase.from("award_categories").delete().eq("id", id);
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success("Category deleted");
+      refetchCats();
+      qc.invalidateQueries({ queryKey: ["award-categories"] });
+    }
+  };
+
+  const handleAddNomineeManual = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !manualName.trim()) return;
+    setAddingNominee(true);
+    try {
+      const { error } = await supabase.from("nominees").insert({
+        name: manualName.trim(),
+        department: manualDept.trim() || null,
+        level: manualLevel.trim() || null,
+        category_id: manualCatId !== "none" ? manualCatId : null,
+        bio: manualBio.trim() || "",
+        is_published: true,
+      });
+      if (error) throw error;
+      toast.success("Nominee added");
+      setManualName("");
+      setManualDept("");
+      setManualLevel("");
+      setManualBio("");
+      setManualCatId("none");
+      refetchNominees();
+      qc.invalidateQueries({ queryKey: ["nominees"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to add nominee");
+    } finally {
+      setAddingNominee(false);
+    }
+  };
+
+  const handleDeleteNominee = async (id: string) => {
+    if (!supabase || !confirm("Delete this nominee?")) return;
+    const { error } = await supabase.from("nominees").delete().eq("id", id);
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success("Nominee deleted");
+      refetchNominees();
+      qc.invalidateQueries({ queryKey: ["nominees"] });
+    }
+  };
+
+  const handleTogglePublishNominee = async (id: string, currentStatus: boolean) => {
+    if (!supabase) return;
+    const { error } = await supabase.from("nominees").update({ is_published: !currentStatus }).eq("id", id);
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success(currentStatus ? "Unpublished" : "Published");
+      refetchNominees();
+      qc.invalidateQueries({ queryKey: ["nominees"] });
+    }
+  };
+
+  const handleDeletePdfDoc = async (id: string) => {
+    if (!supabase || !confirm("Delete this PDF document record?")) return;
+    const { error } = await supabase.from("nominee_pdf_uploads").delete().eq("id", id);
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success("PDF document deleted");
+      refetchPdfs();
+      qc.invalidateQueries({ queryKey: ["nominee-pdfs"] });
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      {/* 1. PDF Upload & Auto-Parsing Section */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex items-center gap-2">
+          <Award className="w-5 h-5 text-primary" />
+          <h3 className="text-lg font-bold text-foreground">Import Nominees from PDF</h3>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Upload an official nominee list document (.pdf). The system will extract nominee names, departments, levels, and citations into an editable table before bulk importing.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          <div>
+            <Label className="text-xs">Document Title</Label>
+            <Input
+              className="mt-1"
+              placeholder="e.g. 2026 Official ABCOSSA Awards Nominees"
+              value={pdfTitle}
+              onChange={(e) => setPdfTitle(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs">Select PDF File</Label>
+            <Input
+              className="mt-1"
+              type="file"
+              accept=".pdf"
+              onChange={handleFileChange}
+            />
+          </div>
+        </div>
+
+        {parsing && (
+          <div className="flex items-center gap-2 text-sm text-primary py-3">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Parsing PDF text and table entries...</span>
+          </div>
+        )}
+
+        {/* Parsed Table Preview */}
+        {parsedNominees.length > 0 && (
+          <div className="mt-6 space-y-4 border-t border-border/60 pt-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <h4 className="font-semibold text-sm">Extracted Nominees Preview ({parsedNominees.length})</h4>
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Apply Category to all:</Label>
+                  <Select value={selectedDefaultCategory} onValueChange={setSelectedDefaultCategory}>
+                    <SelectTrigger className="h-8 text-xs w-48">
+                      <SelectValue placeholder="Select Category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Uncategorized</SelectItem>
+                      {categories.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="sm" onClick={handleAddParsedRow} className="text-xs">
+                  + Add Row
+                </Button>
+                <Button type="button" size="sm" disabled={importing} onClick={handleBulkImport} className="text-xs font-semibold">
+                  {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                  Import {parsedNominees.length} Nominees
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border border-border/60 rounded-xl">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-muted/50 text-muted-foreground uppercase text-[10px] tracking-wider">
+                  <tr>
+                    <th className="p-2.5">Name</th>
+                    <th className="p-2.5">Department</th>
+                    <th className="p-2.5">Level</th>
+                    <th className="p-2.5">Bio / Citation</th>
+                    <th className="p-2.5 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/40">
+                  {parsedNominees.map((item) => (
+                    <tr key={item.id} className="hover:bg-muted/20">
+                      <td className="p-2">
+                        <Input
+                          className="h-8 text-xs"
+                          value={item.name}
+                          onChange={(e) => handleUpdateParsedItem(item.id, "name", e.target.value)}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <Input
+                          className="h-8 text-xs"
+                          value={item.department}
+                          onChange={(e) => handleUpdateParsedItem(item.id, "department", e.target.value)}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <Input
+                          className="h-8 text-xs w-24"
+                          value={item.level}
+                          onChange={(e) => handleUpdateParsedItem(item.id, "level", e.target.value)}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <Input
+                          className="h-8 text-xs"
+                          value={item.bio}
+                          onChange={(e) => handleUpdateParsedItem(item.id, "bio", e.target.value)}
+                        />
+                      </td>
+                      <td className="p-2 text-center">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() => handleRemoveParsedItem(item.id)}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* 2. Uploaded PDF Documents Manager */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <h3 className="text-lg font-bold text-foreground">Hosted PDF Nominee Documents</h3>
+        {pdfDocs.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No PDF documents uploaded yet.</p>
+        ) : (
+          <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden">
+            {pdfDocs.map((doc) => (
+              <div key={doc.id} className="p-3 bg-background flex items-center justify-between text-xs">
+                <div>
+                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="font-semibold text-primary hover:underline">
+                    {doc.title}
+                  </a>
+                  <span className="text-muted-foreground ml-2">({doc.filename} — {doc.parsed_count} candidates)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground">{new Date(doc.created_at).toLocaleDateString()}</span>
+                  <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeletePdfDoc(doc.id)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* 3. Award Categories & Manual Nominee Entry */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Categories */}
+        <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+          <h3 className="text-base font-bold text-foreground">Award Categories</h3>
+          <form onSubmit={handleAddCategory} className="space-y-3">
+            <div>
+              <Label className="text-xs">Category Title</Label>
+              <Input className="mt-1" placeholder="e.g. Student of the Year" value={newCatTitle} onChange={(e) => setNewCatTitle(e.target.value)} required />
+            </div>
+            <div>
+              <Label className="text-xs">Description (optional)</Label>
+              <Input className="mt-1" placeholder="Brief description" value={newCatDesc} onChange={(e) => setNewCatDesc(e.target.value)} />
+            </div>
+            <Button type="submit" size="sm" disabled={addingCat} className="text-xs">
+              {addingCat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "+ Add Category"}
+            </Button>
+          </form>
+
+          <div className="space-y-2 pt-2">
+            {categories.map((c) => (
+              <div key={c.id} className="flex items-center justify-between p-2.5 rounded-lg border border-border/40 bg-muted/20 text-xs">
+                <div>
+                  <span className="font-semibold text-foreground">{c.title}</span>
+                  {c.description && <p className="text-[11px] text-muted-foreground">{c.description}</p>}
+                </div>
+                <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDeleteCategory(c.id)}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Add Individual Nominee */}
+        <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+          <h3 className="text-base font-bold text-foreground">Add Individual Nominee</h3>
+          <form onSubmit={handleAddNomineeManual} className="space-y-3">
+            <div>
+              <Label className="text-xs">Nominee Full Name</Label>
+              <Input className="mt-1" placeholder="e.g. Ama Serwaa" value={manualName} onChange={(e) => setManualName(e.target.value)} required />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Department</Label>
+                <Input className="mt-1" placeholder="e.g. Biochemistry" value={manualDept} onChange={(e) => setManualDept(e.target.value)} />
+              </div>
+              <div>
+                <Label className="text-xs">Level</Label>
+                <Input className="mt-1" placeholder="e.g. L300" value={manualLevel} onChange={(e) => setManualLevel(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Award Category</Label>
+              <Select value={manualCatId} onValueChange={setManualCatId}>
+                <SelectTrigger className="mt-1 text-xs">
+                  <SelectValue placeholder="Select Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Uncategorized</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Bio / Citation</Label>
+              <Textarea className="mt-1 text-xs" rows={2} placeholder="Reason for nomination" value={manualBio} onChange={(e) => setManualBio(e.target.value)} />
+            </div>
+            <Button type="submit" size="sm" disabled={addingNominee} className="text-xs">
+              {addingNominee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Save Nominee"}
+            </Button>
+          </form>
+        </section>
+      </div>
+
+      {/* 4. Nominees List Table */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold text-foreground">Published Nominees ({nominees.length})</h3>
+        </div>
+
+        {nominees.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No nominees added yet.</p>
+        ) : (
+          <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden">
+            {nominees.map((n) => {
+              const catObj = categories.find((c) => c.id === n.category_id);
+              return (
+                <div key={n.id} className="p-3 bg-background flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="space-y-0.5 max-w-md">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-foreground">{n.name}</span>
+                      {catObj && <span className="px-2 py-0.5 bg-primary/10 text-primary rounded-md text-[10px]">{catObj.title}</span>}
+                      {n.level && <span className="text-muted-foreground text-[11px]">{n.level}</span>}
+                    </div>
+                    {n.department && <p className="text-emerald-600 dark:text-emerald-400 text-[11px] font-medium">{n.department}</p>}
+                    {n.bio && <p className="text-muted-foreground text-[11px] line-clamp-1">{n.bio}</p>}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-rose-500">{n.votes_count} votes</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => handleTogglePublishNominee(n.id, n.is_published)}
+                    >
+                      {n.is_published ? "Unpublish" : "Publish"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive"
+                      onClick={() => handleDeleteNominee(n.id)}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function PaymentsAdminPanel() {
+  const { data: hubtelSettings, isLoading: loadingSettings } = useHubtelSettings();
+  const updateSettingsMutation = useUpdateHubtelSettings();
+  const { data: payments = [], isLoading: loadingPayments } = usePayments();
+
+  const [merchantNo, setMerchantNo] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [settingsInitialized, setSettingsInitialized] = useState(false);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  useEffect(() => {
+    if (hubtelSettings && !settingsInitialized) {
+      setMerchantNo(hubtelSettings.merchantAccountNumber || "2019842");
+      setClientId(hubtelSettings.clientId || "");
+      setClientSecret(hubtelSettings.clientSecret || "");
+      setSettingsInitialized(true);
+    }
+  }, [hubtelSettings, settingsInitialized]);
+
+  const handleSaveSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateSettingsMutation.mutate(
+      {
+        merchantAccountNumber: merchantNo,
+        clientId,
+        clientSecret,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Hubtel Merchant settings saved successfully!");
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error ? err.message : "Failed to save Hubtel settings");
+        },
+      }
+    );
+  };
+
+  const filteredPayments = payments.filter((p) => {
+    const matchesStatus = statusFilter === "all" || p.status === statusFilter;
+    const matchesSearch =
+      p.client_reference.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.customer_phone.includes(searchQuery) ||
+      p.customer_email.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesStatus && matchesSearch;
+  });
+
+  const totalCollected = payments
+    .filter((p) => p.status === "paid")
+    .reduce((sum, p) => sum + Number(p.amount), 0);
+
+  const paidCount = payments.filter((p) => p.status === "paid").length;
+  const pendingCount = payments.filter((p) => p.status === "pending").length;
+
+  return (
+    <div className="space-y-8">
+      {/* 1. Hubtel Settings Configuration */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <CreditCard className="w-5 h-5 text-primary" />
+            <h3 className="text-lg font-bold text-foreground">Hubtel Merchant Gateway Settings</h3>
+          </div>
+          <span className="text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-full font-semibold">
+            Active: Hubtel MoMo & Card
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Update your official Hubtel Merchant Account Number and API credentials. These settings control live payment processing for student dues, event tickets, donations, and nominations.
+        </p>
+
+        {loadingSettings ? (
+          <div className="py-6 flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading Hubtel merchant config...
+          </div>
+        ) : (
+          <form onSubmit={handleSaveSettings} className="space-y-4 pt-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <Label className="text-xs font-semibold">Hubtel Merchant Account Number</Label>
+                <Input
+                  className="mt-1 font-mono text-sm font-semibold"
+                  placeholder="e.g. 2019842"
+                  value={merchantNo}
+                  onChange={(e) => setMerchantNo(e.target.value)}
+                  required
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">Found in your Hubtel Merchant Portal profile.</p>
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold">Client ID (API Key)</Label>
+                <Input
+                  className="mt-1 font-mono text-xs"
+                  placeholder="Hubtel API Client ID"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold">Client Secret</Label>
+                <Input
+                  type="password"
+                  className="mt-1 font-mono text-xs"
+                  placeholder="••••••••••••••••"
+                  value={clientSecret}
+                  onChange={(e) => setClientSecret(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <Button
+              type="submit"
+              size="sm"
+              disabled={updateSettingsMutation.isPending}
+              className="text-xs font-semibold gap-1.5"
+            >
+              {updateSettingsMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Save Merchant Settings
+            </Button>
+          </form>
+        )}
+      </section>
+
+      {/* 2. Financial Overview Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-card border border-border/60 p-5 rounded-2xl space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">Total Payments Collected</span>
+          <h4 className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400">{formatGHS(totalCollected)}</h4>
+        </div>
+
+        <div className="bg-card border border-border/60 p-5 rounded-2xl space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">Successful Transactions</span>
+          <h4 className="text-2xl font-extrabold text-foreground">{paidCount}</h4>
+        </div>
+
+        <div className="bg-card border border-border/60 p-5 rounded-2xl space-y-1">
+          <span className="text-xs font-medium text-muted-foreground">Pending / Authorization</span>
+          <h4 className="text-2xl font-extrabold text-amber-500">{pendingCount}</h4>
+        </div>
+      </div>
+
+      {/* 3. Transaction History Table */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+          <h3 className="text-lg font-bold text-foreground">Transaction Logs ({filteredPayments.length})</h3>
+
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-9 text-xs w-36">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="failed">Failed</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Input
+              placeholder="Search reference, customer..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 text-xs w-full md:w-56"
+            />
+          </div>
+        </div>
+
+        {loadingPayments ? (
+          <div className="py-12 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading transaction records...
+          </div>
+        ) : filteredPayments.length === 0 ? (
+          <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border rounded-xl">
+            No payment transactions found.
+          </div>
+        ) : (
+          <div className="overflow-x-auto border border-border/60 rounded-xl">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-muted/50 text-muted-foreground uppercase text-[10px] tracking-wider">
+                <tr>
+                  <th className="p-3">Reference</th>
+                  <th className="p-3">Customer</th>
+                  <th className="p-3">Amount</th>
+                  <th className="p-3">Channel</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40">
+                {filteredPayments.map((p) => (
+                  <tr key={p.id} className="hover:bg-muted/20">
+                    <td className="p-3 font-mono font-medium text-foreground">{p.client_reference}</td>
+                    <td className="p-3">
+                      <div className="font-semibold text-foreground">{p.customer_name}</div>
+                      <div className="text-[11px] text-muted-foreground">{p.customer_phone} • {p.customer_email}</div>
+                    </td>
+                    <td className="p-3 font-extrabold text-foreground">{formatGHS(p.amount)}</td>
+                    <td className="p-3 uppercase text-[11px] font-medium text-muted-foreground">{p.payment_channel || "momo"}</td>
+                    <td className="p-3">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          p.status === "paid"
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                            : p.status === "pending"
+                            ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                            : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                        }`}
+                      >
+                        {p.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-muted-foreground text-[11px]">
+                      {new Date(p.created_at).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );
