@@ -1,8 +1,9 @@
--- ABCOSSA: Nominees & Awards module with PDF list uploads
+-- ABCOSSA: Nominees & Awards module with PDF list uploads and vote pricing
 create table if not exists public.award_categories (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   description text,
+  vote_price_ghs numeric(10, 2) not null default 1.00,
   is_active boolean not null default true,
   display_order integer not null default 0,
   created_at timestamptz not null default now()
@@ -31,12 +32,17 @@ create table if not exists public.nominee_pdf_uploads (
   created_at timestamptz not null default now()
 );
 
+-- Seed initial vote price in site_settings
+insert into public.site_settings (key, value) values
+  ('vote_price_ghs', '1.00')
+on conflict (key) do nothing;
+
 -- Seed initial categories if none exist
-insert into public.award_categories (title, description, display_order) values
-  ('Student of the Year', 'Recognizing outstanding academic excellence, leadership, and community service.', 0),
-  ('Best Researcher', 'Honoring exceptional contributions to biological and chemical sciences research.', 1),
-  ('Leadership Excellence', 'Awarded to student leaders demonstrating exemplary dedication to student welfare.', 2),
-  ('Most Innovative Project', 'Celebrating creative scientific solutions and technological innovations.', 3)
+insert into public.award_categories (title, description, vote_price_ghs, display_order) values
+  ('Student of the Year', 'Recognizing outstanding academic excellence, leadership, and community service.', 1.00, 0),
+  ('Best Researcher', 'Honoring exceptional contributions to biological and chemical sciences research.', 1.00, 1),
+  ('Leadership Excellence', 'Awarded to student leaders demonstrating exemplary dedication to student welfare.', 1.00, 2),
+  ('Most Innovative Project', 'Celebrating creative scientific solutions and technological innovations.', 1.00, 3)
 on conflict do nothing;
 
 -- Enable RLS

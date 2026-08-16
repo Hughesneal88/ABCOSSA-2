@@ -23,7 +23,7 @@ import {
   CreditCard,
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
-import type { AwardCategory, NomineeRow, NomineePdfUpload } from "@/hooks/useNominees";
+import { useVotePrice, useUpdateVotePrice, type AwardCategory, type NomineeRow, type NomineePdfUpload } from "@/hooks/useNominees";
 import { usePayments, useHubtelSettings, useUpdateHubtelSettings } from "@/hooks/usePayments";
 import { formatGHS, type PaymentRecord } from "@/lib/hubtelClient";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
@@ -3110,18 +3110,42 @@ function NomineesAdminPanel() {
   const [selectedDefaultCategory, setSelectedDefaultCategory] = useState<string>("none");
   const [importing, setImporting] = useState(false);
 
+  // Vote price management
+  const { data: currentVotePrice = 1.0 } = useVotePrice();
+  const updateVotePriceMutation = useUpdateVotePrice();
+  const [votePriceInput, setVotePriceInput] = useState<number>(1.0);
+  const [votePriceInitialized, setVotePriceInitialized] = useState(false);
+
+  useEffect(() => {
+    if (currentVotePrice !== undefined && !votePriceInitialized) {
+      setVotePriceInput(currentVotePrice);
+      setVotePriceInitialized(true);
+    }
+  }, [currentVotePrice, votePriceInitialized]);
+
   // Category management
   const [newCatTitle, setNewCatTitle] = useState("");
   const [newCatDesc, setNewCatDesc] = useState("");
   const [addingCat, setAddingCat] = useState(false);
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editCatTitle, setEditCatTitle] = useState("");
+  const [editCatDesc, setEditCatDesc] = useState("");
 
-  // Manual Nominee Addition
+  // Manual Nominee Addition & Editing
   const [manualName, setManualName] = useState("");
   const [manualDept, setManualDept] = useState("");
   const [manualLevel, setManualLevel] = useState("");
   const [manualCatId, setManualCatId] = useState("none");
   const [manualBio, setManualBio] = useState("");
   const [addingNominee, setAddingNominee] = useState(false);
+
+  const [editingNomineeId, setEditingNomineeId] = useState<string | null>(null);
+  const [editNomineeName, setEditNomineeName] = useState("");
+  const [editNomineeDept, setEditNomineeDept] = useState("");
+  const [editNomineeLevel, setEditNomineeLevel] = useState("");
+  const [editNomineeCatId, setEditNomineeCatId] = useState("none");
+  const [editNomineeBio, setEditNomineeBio] = useState("");
+  const [editNomineeVotes, setEditNomineeVotes] = useState(0);
 
   // Queries
   const { data: categories = [], refetch: refetchCats } = useQuery<AwardCategory[]>({
@@ -3156,6 +3180,54 @@ function NomineesAdminPanel() {
     },
     enabled: isSupabaseConfigured,
   });
+
+  const handleSaveVotePrice = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateVotePriceMutation.mutate(Number(votePriceInput), {
+      onSuccess: () => {
+        toast.success(`Global vote price updated to ${formatGHS(Number(votePriceInput))} per vote!`);
+      },
+      onError: (err) => {
+        toast.error(err instanceof Error ? err.message : "Failed to update vote price");
+      },
+    });
+  };
+
+  const startEditNominee = (n: NomineeRow) => {
+    setEditingNomineeId(n.id);
+    setEditNomineeName(n.name);
+    setEditNomineeDept(n.department || "");
+    setEditNomineeLevel(n.level || "");
+    setEditNomineeCatId(n.category_id || "none");
+    setEditNomineeBio(n.bio || "");
+    setEditNomineeVotes(n.votes_count);
+  };
+
+  const handleSaveNomineeEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || !editingNomineeId) return;
+
+    const { error } = await supabase
+      .from("nominees")
+      .update({
+        name: editNomineeName.trim(),
+        department: editNomineeDept.trim() || null,
+        level: editNomineeLevel.trim() || null,
+        category_id: editNomineeCatId !== "none" ? editNomineeCatId : null,
+        bio: editNomineeBio.trim() || "",
+        votes_count: editNomineeVotes,
+      })
+      .eq("id", editingNomineeId);
+
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success("Nominee updated successfully!");
+      setEditingNomineeId(null);
+      refetchNominees();
+      qc.invalidateQueries({ queryKey: ["nominees"] });
+    }
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -3373,6 +3445,46 @@ function NomineesAdminPanel() {
 
   return (
     <div className="space-y-8">
+      {/* 0. Vote Price Configuration Card */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Award className="w-5 h-5 text-amber-500" />
+            <h3 className="text-lg font-bold text-foreground">Award Vote Price Configuration</h3>
+          </div>
+          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
+            Active Price: {formatGHS(currentVotePrice)} / vote
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Configure the price per vote (GHS) charged during voting. Setting the price to 0.00 allows free voting.
+        </p>
+
+        <form onSubmit={handleSaveVotePrice} className="flex flex-wrap items-end gap-3 pt-2">
+          <div className="w-48">
+            <Label className="text-xs font-semibold">Price per Vote (GHS)</Label>
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={votePriceInput}
+              onChange={(e) => setVotePriceInput(Number(e.target.value))}
+              className="mt-1 font-bold text-sm"
+              required
+            />
+          </div>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={updateVotePriceMutation.isPending}
+            className="text-xs font-semibold gap-1.5"
+          >
+            {updateVotePriceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Save Vote Price
+          </Button>
+        </form>
+      </section>
+
       {/* 1. PDF Upload & Auto-Parsing Section */}
       <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
         <div className="flex items-center gap-2">
@@ -3549,7 +3661,7 @@ function NomineesAdminPanel() {
               <Input className="mt-1" placeholder="Brief description" value={newCatDesc} onChange={(e) => setNewCatDesc(e.target.value)} />
             </div>
             <Button type="submit" size="sm" disabled={addingCat} className="text-xs">
-              {addingCat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "+ Add Category"}
+              {addingCat ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "+ Create Category"}
             </Button>
           </form>
 
@@ -3570,7 +3682,7 @@ function NomineesAdminPanel() {
 
         {/* Add Individual Nominee */}
         <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
-          <h3 className="text-base font-bold text-foreground">Add Individual Nominee</h3>
+          <h3 className="text-base font-bold text-foreground">Add Nominee Manually</h3>
           <form onSubmit={handleAddNomineeManual} className="space-y-3">
             <div>
               <Label className="text-xs">Nominee Full Name</Label>
@@ -3611,7 +3723,7 @@ function NomineesAdminPanel() {
         </section>
       </div>
 
-      {/* 4. Nominees List Table */}
+      {/* 4. Nominees List Table & Editor */}
       <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-bold text-foreground">Published Nominees ({nominees.length})</h3>
@@ -3623,6 +3735,56 @@ function NomineesAdminPanel() {
           <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden">
             {nominees.map((n) => {
               const catObj = categories.find((c) => c.id === n.category_id);
+              const isEditing = editingNomineeId === n.id;
+
+              if (isEditing) {
+                return (
+                  <form key={n.id} onSubmit={handleSaveNomineeEdit} className="p-4 bg-muted/30 space-y-3 text-xs">
+                    <h4 className="font-bold text-foreground">Edit Nominee Profile</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs">Full Name</Label>
+                        <Input className="mt-1 text-xs" value={editNomineeName} onChange={(e) => setEditNomineeName(e.target.value)} required />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Award Category</Label>
+                        <Select value={editNomineeCatId} onValueChange={setEditNomineeCatId}>
+                          <SelectTrigger className="mt-1 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Uncategorized</SelectItem>
+                            {categories.map((c) => (
+                              <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="text-xs">Department</Label>
+                        <Input className="mt-1 text-xs" value={editNomineeDept} onChange={(e) => setEditNomineeDept(e.target.value)} />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Level</Label>
+                        <Input className="mt-1 text-xs" value={editNomineeLevel} onChange={(e) => setEditNomineeLevel(e.target.value)} />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Votes Count Override</Label>
+                        <Input className="mt-1 text-xs" type="number" min={0} value={editNomineeVotes} onChange={(e) => setEditNomineeVotes(Number(e.target.value))} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <Label className="text-xs">Bio / Citation</Label>
+                        <Textarea className="mt-1 text-xs" rows={2} value={editNomineeBio} onChange={(e) => setEditNomineeBio(e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <Button type="submit" size="sm" className="text-xs">Save Changes</Button>
+                      <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={() => setEditingNomineeId(null)}>Cancel</Button>
+                    </div>
+                  </form>
+                );
+              }
+
               return (
                 <div key={n.id} className="p-3 bg-background flex flex-wrap items-center justify-between gap-2 text-xs">
                   <div className="space-y-0.5 max-w-md">
@@ -3637,6 +3799,15 @@ function NomineesAdminPanel() {
 
                   <div className="flex items-center gap-3">
                     <span className="text-xs font-semibold text-rose-500">{n.votes_count} votes</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => startEditNominee(n)}
+                    >
+                      Edit
+                    </Button>
                     <Button
                       type="button"
                       variant="ghost"

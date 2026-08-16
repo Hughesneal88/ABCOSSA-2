@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Award, Download, FileText, Heart, Search, Sparkles, CheckCircle2 } from "lucide-react";
+import { Award, Download, FileText, Heart, Search, Sparkles, CheckCircle2, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -11,47 +11,49 @@ import {
   useNominees,
   useNomineePdfs,
   useVoteNominee,
+  useVotePrice,
+  type NomineeRow,
 } from "@/hooks/useNominees";
+import { formatGHS } from "@/lib/hubtelClient";
+import { HubtelCheckoutModal } from "@/components/payment/HubtelCheckoutModal";
 
 export default function NomineesPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [votedIds, setVotedIds] = useState<Set<string>>(() => {
-    try {
-      const saved = localStorage.getItem("abcossa_voted_nominees");
-      return saved ? new Set(JSON.parse(saved)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
+  const [targetNominee, setTargetNominee] = useState<NomineeRow | null>(null);
+  const [voteCount, setVoteCount] = useState<number>(1);
 
   const { data: categories = [], isLoading: loadingCategories } = useAwardCategories();
   const { data: nominees = [], isLoading: loadingNominees } = useNominees();
-  const { data: pdfDocs = [], isLoading: loadingPdfs } = useNomineePdfs();
+  const { data: pdfDocs = [] } = useNomineePdfs();
+  const { data: votePrice = 1.0 } = useVotePrice();
 
   const voteMutation = useVoteNominee();
 
-  const handleVote = (nomineeId: string, currentVotes: number) => {
-    if (votedIds.has(nomineeId)) {
-      toast.info("You have already voted for this nominee!");
-      return;
-    }
-
+  const handleFreeVote = (nomineeId: string, currentVotes: number) => {
     voteMutation.mutate(
-      { nomineeId, currentVotes },
+      { nomineeId, currentVotes, voteIncrement: 1 },
       {
         onSuccess: () => {
-          const nextVoted = new Set(votedIds).add(nomineeId);
-          setVotedIds(nextVoted);
-          try {
-            localStorage.setItem("abcossa_voted_nominees", JSON.stringify(Array.from(nextVoted)));
-          } catch {
-            // ignore localStorage error
-          }
           toast.success("Thank you for your vote!");
         },
         onError: (err) => {
           toast.error(err instanceof Error ? err.message : "Voting failed. Please try again.");
+        },
+      }
+    );
+  };
+
+  const handlePaidVoteSuccess = (nomineeId: string, currentVotes: number, votesToAdd: number) => {
+    voteMutation.mutate(
+      { nomineeId, currentVotes, voteIncrement: votesToAdd },
+      {
+        onSuccess: () => {
+          toast.success(`Successfully added ${votesToAdd} vote(s)! Thank you for supporting ABCOSSA awards.`);
+          setTargetNominee(null);
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error ? err.message : "Failed to record votes");
         },
       }
     );
@@ -71,7 +73,7 @@ export default function NomineesPage() {
       <div className="container mx-auto px-4 lg:px-8">
         {/* Header Hero */}
         <div className="max-w-4xl mx-auto text-center mb-12 space-y-4">
-          <Badge variant="outline" className="px-3 py-1 text-sm border-primary/30 text-primary bg-primary/5 rounded-full inline-flex items-center gap-1.5">
+          <Badge variant="outline" className="px-3.5 py-1 text-sm border-primary/30 text-primary bg-primary/5 rounded-full inline-flex items-center gap-1.5 font-semibold">
             <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" /> ABCOSSA Excellence Awards
           </Badge>
           <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-foreground">
@@ -79,8 +81,12 @@ export default function NomineesPage() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Discover outstanding students, researchers, and student leaders nominated for ABCOSSA awards.
-            Vote for your choices and download official PDF nominee lists.
+            Cast your votes and download official PDF nominee lists.
           </p>
+
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+            <span>Voting Price: {votePrice === 0 ? "Free" : `${formatGHS(votePrice)} / vote`}</span>
+          </div>
         </div>
 
         {/* PDF Documents Section */}
@@ -180,7 +186,6 @@ export default function NomineesPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredNominees.map((nominee) => {
                 const categoryObj = categories.find((c) => c.id === nominee.category_id);
-                const hasVoted = votedIds.has(nominee.id);
 
                 return (
                   <Card
@@ -225,26 +230,35 @@ export default function NomineesPage() {
                     <div className="p-6 pt-0 mt-4 border-t border-border/40 pt-4 flex items-center justify-between bg-muted/20">
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
                         <Heart className="w-4 h-4 text-rose-500 fill-rose-500/20" />
-                        <span>{nominee.votes_count} {nominee.votes_count === 1 ? "Vote" : "Votes"}</span>
+                        <span className="font-bold text-foreground">{nominee.votes_count}</span>
+                        <span>{nominee.votes_count === 1 ? "Vote" : "Votes"}</span>
                       </div>
 
-                      <Button
-                        size="sm"
-                        variant={hasVoted ? "secondary" : "default"}
-                        disabled={hasVoted || voteMutation.isPending}
-                        onClick={() => handleVote(nominee.id, nominee.votes_count)}
-                        className="rounded-lg gap-1.5 text-xs font-semibold"
-                      >
-                        {hasVoted ? (
-                          <>
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Voted
-                          </>
-                        ) : (
-                          <>
-                            <Heart className="w-3.5 h-3.5" /> Vote
-                          </>
-                        )}
-                      </Button>
+                      {votePrice === 0 ? (
+                        <Button
+                          size="sm"
+                          disabled={voteMutation.isPending}
+                          onClick={() => handleFreeVote(nominee.id, nominee.votes_count)}
+                          className="rounded-lg gap-1.5 text-xs font-semibold"
+                        >
+                          <Heart className="w-3.5 h-3.5" /> Free Vote
+                        </Button>
+                      ) : (
+                        <HubtelCheckoutModal
+                          title={`Vote for ${nominee.name}`}
+                          defaultAmount={votePrice * voteCount}
+                          paymentType="voting"
+                          onSuccess={() => handlePaidVoteSuccess(nominee.id, nominee.votes_count, voteCount)}
+                          trigger={
+                            <Button
+                              size="sm"
+                              className="rounded-lg gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
+                            >
+                              <Heart className="w-3.5 h-3.5" /> Vote ({formatGHS(votePrice)})
+                            </Button>
+                          }
+                        />
+                      )}
                     </div>
                   </Card>
                 );

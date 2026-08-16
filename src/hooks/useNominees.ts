@@ -5,6 +5,7 @@ export type AwardCategory = {
   id: string;
   title: string;
   description: string | null;
+  vote_price_ghs: number;
   is_active: boolean;
   display_order: number;
   created_at: string;
@@ -88,16 +89,54 @@ export function useNomineePdfs() {
   });
 }
 
+export function useVotePrice() {
+  return useQuery({
+    queryKey: ["vote-price-ghs"],
+    queryFn: async (): Promise<number> => {
+      if (!supabase) return 1.00;
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "vote_price_ghs")
+        .maybeSingle();
+
+      if (error) throw error;
+      return data?.value ? parseFloat(data.value) : 1.00;
+    },
+    enabled: isSupabaseConfigured,
+  });
+}
+
+export function useUpdateVotePrice() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (price: number) => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      const { error } = await supabase
+        .from("site_settings")
+        .upsert({ key: "vote_price_ghs", value: price.toFixed(2) }, { onConflict: "key" });
+
+      if (error) throw error;
+      return price;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vote-price-ghs"] });
+    },
+  });
+}
+
 export function useVoteNominee() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ nomineeId, currentVotes }: { nomineeId: string; currentVotes: number }) => {
+    mutationFn: async ({ nomineeId, currentVotes, voteIncrement = 1 }: { nomineeId: string; currentVotes: number; voteIncrement?: number }) => {
       if (!supabase) throw new Error("Supabase client is not available");
 
       const { data, error } = await supabase
         .from("nominees")
-        .update({ votes_count: currentVotes + 1 })
+        .update({ votes_count: currentVotes + voteIncrement })
         .eq("id", nomineeId)
         .select()
         .single();
@@ -107,6 +146,7 @@ export function useVoteNominee() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
     },
   });
 }
