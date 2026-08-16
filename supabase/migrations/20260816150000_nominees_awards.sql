@@ -50,39 +50,22 @@ alter table public.award_categories enable row level security;
 alter table public.nominees enable row level security;
 alter table public.nominee_pdf_uploads enable row level security;
 
--- Policies for award_categories
+-- Policies for award_categories (read & write)
 create policy "award_categories_select" on public.award_categories for select using (true);
-create policy "award_categories_write" on public.award_categories for all to authenticated
-  using (exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')))
-  with check (exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')));
+create policy "award_categories_write_all" on public.award_categories for all using (true) with check (true);
 
--- Policies for nominees
-create policy "nominees_select" on public.nominees for select
-  using (is_published = true or exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')));
-
-create policy "nominees_write" on public.nominees for all to authenticated
-  using (exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')))
-  with check (exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')));
-
--- Allow public to increment votes
-create policy "nominees_vote_update" on public.nominees for update
-  using (true) with check (true);
+-- Policies for nominees (read & write)
+create policy "nominees_select" on public.nominees for select using (true);
+create policy "nominees_write_all" on public.nominees for all using (true) with check (true);
 
 -- Policies for nominee_pdf_uploads
 create policy "nominee_pdf_select" on public.nominee_pdf_uploads for select using (true);
-create policy "nominee_pdf_write" on public.nominee_pdf_uploads for all to authenticated
-  using (exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')))
-  with check (exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')));
+create policy "nominee_pdf_write_all" on public.nominee_pdf_uploads for all using (true) with check (true);
 
 -- Grants
-grant select on public.award_categories to anon, authenticated;
-grant insert, update, delete on public.award_categories to authenticated;
-
-grant select, update on public.nominees to anon, authenticated;
-grant insert, update, delete on public.nominees to authenticated;
-
-grant select on public.nominee_pdf_uploads to anon, authenticated;
-grant insert, update, delete on public.nominee_pdf_uploads to authenticated;
+grant select, insert, update, delete on public.award_categories to anon, authenticated;
+grant select, insert, update, delete on public.nominees to anon, authenticated;
+grant select, insert, update, delete on public.nominee_pdf_uploads to anon, authenticated;
 
 -- Storage bucket for PDF nominee documents
 insert into storage.buckets (id, name, public)
@@ -92,11 +75,11 @@ on conflict (id) do nothing;
 create policy "nominee_docs_public_read" on storage.objects for select
   using (bucket_id = 'nominee-documents');
 
-create policy "nominee_docs_editors_upload" on storage.objects for insert to authenticated
-  with check (bucket_id = 'nominee-documents' and exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')));
+create policy "nominee_docs_editors_upload" on storage.objects for insert
+  with check (bucket_id = 'nominee-documents');
 
-create policy "nominee_docs_editors_update" on storage.objects for update to authenticated
-  using (bucket_id = 'nominee-documents' and exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')));
+create policy "nominee_docs_editors_update" on storage.objects for update
+  using (bucket_id = 'nominee-documents');
 
-create policy "nominee_docs_editors_delete" on storage.objects for delete to authenticated
-  using (bucket_id = 'nominee-documents' and exists (select 1 from public.content_editors m where m.email = (select auth.jwt() ->> 'email')));
+create policy "nominee_docs_editors_delete" on storage.objects for delete
+  using (bucket_id = 'nominee-documents');

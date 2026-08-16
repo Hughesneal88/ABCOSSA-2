@@ -3354,13 +3354,14 @@ function NomineesAdminPanel() {
         display_order: categories.length,
       });
       if (error) throw error;
-      toast.success("Category added");
+      toast.success("Category added successfully!");
       setNewCatTitle("");
       setNewCatDesc("");
       refetchCats();
       qc.invalidateQueries({ queryKey: ["award-categories"] });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to add category");
+    } catch (err: unknown) {
+      const msg = typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "Failed to add category";
+      toast.error(`Category creation error: ${msg}`);
     } finally {
       setAddingCat(false);
     }
@@ -3392,7 +3393,7 @@ function NomineesAdminPanel() {
         is_published: true,
       });
       if (error) throw error;
-      toast.success("Nominee added");
+      toast.success("Nominee added successfully!");
       setManualName("");
       setManualDept("");
       setManualLevel("");
@@ -3400,8 +3401,9 @@ function NomineesAdminPanel() {
       setManualCatId("none");
       refetchNominees();
       qc.invalidateQueries({ queryKey: ["nominees"] });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to add nominee");
+    } catch (err: unknown) {
+      const msg = typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "Failed to add nominee";
+      toast.error(`Nominee addition error: ${msg}`);
     } finally {
       setAddingNominee(false);
     }
