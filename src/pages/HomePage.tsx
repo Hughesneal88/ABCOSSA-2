@@ -99,6 +99,9 @@ export default function HomePage() {
             src={si("hero", heroImage)}
             alt="University department building and lush trees on campus—sustaining the ecosystem"
             className="w-full h-full object-cover object-center"
+            loading="eager"
+            // @ts-expect-error fetchpriority attribute
+            fetchpriority="high"
           />
           <div className="absolute inset-0 bg-gradient-nature" />
         </div>
@@ -168,6 +171,8 @@ export default function HomePage() {
                     src={program.image}
                     alt={program.title}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    loading="lazy"
+                    decoding="async"
                   />
                 </div>
                 <div className="p-6">

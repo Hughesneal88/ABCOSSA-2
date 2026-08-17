@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -21,11 +21,13 @@ import {
   ChevronDown,
   Award,
   CreditCard,
+  Clock,
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
 import { useVotePrice, useUpdateVotePrice, type AwardCategory, type NomineeRow, type NomineePdfUpload } from "@/hooks/useNominees";
 import { usePayments, useHubtelSettings, useUpdateHubtelSettings } from "@/hooks/usePayments";
 import { formatGHS, type PaymentRecord } from "@/lib/hubtelClient";
+import { useSessionTimeout } from "@/hooks/useSessionTimeout";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -292,11 +294,31 @@ export default function AdminContentPage() {
     setPwdPassword("");
   };
 
-  const signOut = async () => {
+  const signOut = async (message = "Signed out") => {
     if (!supabase) return;
+    localStorage.removeItem("abcossa_admin_session_start");
     await supabase.auth.signOut();
-    toast.message("Signed out");
+    qc.clear();
+    toast.message(message);
   };
+
+  const handleSessionTimeout = useCallback(() => {
+    if (!supabase) return;
+    localStorage.removeItem("abcossa_admin_session_start");
+    void supabase.auth.signOut();
+    qc.clear();
+    toast.warning("Session timed out due to inactivity. Please sign in again.", {
+      duration: 6000,
+    });
+  }, [qc]);
+
+  const { showWarning, secondsRemaining, extendSession } = useSessionTimeout({
+    inactivityTimeoutMs: 15 * 60 * 1000, // 15 minutes inactivity timeout
+    warningThresholdMs: 60 * 1000,       // 1 minute warning threshold
+    maxSessionLifetimeMs: 8 * 60 * 60 * 1000, // 8 hours max session lifetime
+    onTimeout: handleSessionTimeout,
+    isAuthenticated: Boolean(user && isEditor),
+  });
 
   if (!isSupabaseConfigured || !supabase) {
     return (
@@ -414,12 +436,15 @@ export default function AdminContentPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-flex items-center gap-1 text-[11px] text-muted-foreground bg-muted px-2.5 py-1 rounded-full border border-border/60 font-medium">
+              <Clock className="w-3 h-3 text-amber-500" /> Auto-logout: 15m inactivity
+            </span>
             <Button variant="outline" size="sm" asChild>
               <a href="/" target="_blank" rel="noreferrer">
                 View site <ExternalLink className="w-3.5 h-3.5 ml-1" />
               </a>
             </Button>
-            <Button variant="ghost" size="sm" onClick={signOut}>
+            <Button variant="ghost" size="sm" onClick={() => signOut("Signed out")}>
               <LogOut className="w-4 h-4 mr-1" />
               Sign out
             </Button>
@@ -438,43 +463,20 @@ export default function AdminContentPage() {
               <Users className="w-3.5 h-3.5" />
               Leadership
             </TabsTrigger>
-            <TabsTrigger value="settings" className="gap-1.5">
-              <Settings className="w-3.5 h-3.5" />
-              Settings
-            </TabsTrigger>
-            <TabsTrigger value="images" className="gap-1.5">
-              <Image className="w-3.5 h-3.5" />
-              Images
-            </TabsTrigger>
-            <TabsTrigger value="resources" className="gap-1.5">
-              <FolderOpen className="w-3.5 h-3.5" />
-              Resources
-            </TabsTrigger>
-            <TabsTrigger value="research" className="gap-1.5">
-              <BookOpen className="w-3.5 h-3.5" />
-              Research
-            </TabsTrigger>
             <TabsTrigger value="nominees" className="gap-1.5">
-              <Award className="w-3.5 h-3.5" />
+              <Award className="w-3.5 h-3.5 text-amber-500" />
               Nominees & Awards
             </TabsTrigger>
             <TabsTrigger value="payments" className="gap-1.5">
-              <CreditCard className="w-3.5 h-3.5" />
+              <CreditCard className="w-3.5 h-3.5 text-emerald-500" />
               Payments & Finance
             </TabsTrigger>
-            <TabsTrigger value="account" className="gap-1.5">
-              <KeyRound className="w-3.5 h-3.5" />
-              Account
-            </TabsTrigger>
+            <TabsTrigger value="settings">Site settings</TabsTrigger>
+            <TabsTrigger value="images">Site Images</TabsTrigger>
+            <TabsTrigger value="resources">Student resources</TabsTrigger>
+            <TabsTrigger value="research">Research directory</TabsTrigger>
+            <TabsTrigger value="account">My account</TabsTrigger>
           </TabsList>
-
-          <TabsContent value="nominees">
-            <NomineesAdminPanel />
-          </TabsContent>
-
-          <TabsContent value="payments">
-            <PaymentsAdminPanel />
-          </TabsContent>
 
           <TabsContent value="account">
             <AccountSettingsPanel user={user} />
@@ -495,6 +497,12 @@ export default function AdminContentPage() {
           <TabsContent value="leadership">
             <LeadershipAdminPanel userId={user.id} />
           </TabsContent>
+          <TabsContent value="nominees">
+            <NomineesAdminPanel />
+          </TabsContent>
+          <TabsContent value="payments">
+            <PaymentsAdminPanel />
+          </TabsContent>
           <TabsContent value="settings">
             <SettingsAdminPanel />
           </TabsContent>
@@ -509,6 +517,32 @@ export default function AdminContentPage() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Session Timeout Warning Modal */}
+      {showWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-card border border-border shadow-2xl rounded-2xl p-6 max-w-md w-full space-y-4 text-center">
+            <div className="w-12 h-12 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto">
+              <Clock className="w-6 h-6 animate-pulse" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-lg font-bold text-foreground">Session Timing Out Soon</h3>
+              <p className="text-xs text-muted-foreground">
+                You have been inactive. Your session will expire in{" "}
+                <span className="font-bold text-amber-500 font-mono text-sm">{secondsRemaining}s</span> due to inactivity.
+              </p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" size="sm" className="flex-1 text-xs" onClick={() => signOut("Signed out")}>
+                Sign Out Now
+              </Button>
+              <Button size="sm" className="flex-1 text-xs font-semibold" onClick={extendSession}>
+                Stay Logged In
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

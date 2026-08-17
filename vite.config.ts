@@ -2,13 +2,20 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
-const isNetlify = process.env.NETLIFY === "true";
-
 export default defineConfig(() => ({
-  // base: isNetlify ? "/" : "/ABCOSSA/",
   build: {
-    // outDir: isNetlify ? "dist" : "docs",
     outDir: "dist",
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "react-router-dom"],
+          "vendor-query": ["@tanstack/react-query"],
+          "vendor-pdfjs": ["pdfjs-dist"],
+          "vendor-icons": ["lucide-react"],
+        },
+      },
+    },
   },
   server: {
     host: "::",
