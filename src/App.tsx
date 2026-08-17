@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { Loader2 } from "lucide-react";
+import { isAdminSubdomain } from "@/lib/domainRouting";
 
 // Route-based code splitting for fast initial page load
 const HomePage = lazy(() => import("./pages/HomePage"));
@@ -35,34 +36,50 @@ function PageSkeleton() {
   );
 }
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Suspense fallback={<PageSkeleton />}>
-          <Routes>
-            <Route path="/admin" element={<AdminContentPage />} />
-            <Route element={<Layout />}>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/about" element={<AboutPage />} />
-              <Route path="/internships" element={<InternshipsPage />} />
-              <Route path="/programs" element={<Navigate to="/internships" replace />} />
-              <Route path="/research" element={<ResearchPage />} />
-              <Route path="/nominees" element={<NomineesPage />} />
-              <Route path="/news" element={<NewsPage />} />
-              <Route path="/news/:slug" element={<BlogPostPage />} />
-              <Route path="/events" element={<EventsPage />} />
-              <Route path="/resources" element={<ResourcesPage />} />
-              <Route path="/contact" element={<ContactPage />} />
-              <Route path="*" element={<NotFound />} />
-            </Route>
-          </Routes>
-        </Suspense>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+const App = () => {
+  const isSubdomainAdmin = isAdminSubdomain();
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Suspense fallback={<PageSkeleton />}>
+            <Routes>
+              {isSubdomainAdmin ? (
+                // When accessed via admin.abcossa.org or portal.abcossa.org
+                <>
+                  <Route path="/" element={<AdminContentPage />} />
+                  <Route path="/admin" element={<AdminContentPage />} />
+                  <Route path="*" element={<AdminContentPage />} />
+                </>
+              ) : (
+                // Standard main site routes (abcossa.org)
+                <>
+                  <Route path="/admin" element={<AdminContentPage />} />
+                  <Route element={<Layout />}>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/about" element={<AboutPage />} />
+                    <Route path="/internships" element={<InternshipsPage />} />
+                    <Route path="/programs" element={<Navigate to="/internships" replace />} />
+                    <Route path="/research" element={<ResearchPage />} />
+                    <Route path="/nominees" element={<NomineesPage />} />
+                    <Route path="/news" element={<NewsPage />} />
+                    <Route path="/news/:slug" element={<BlogPostPage />} />
+                    <Route path="/events" element={<EventsPage />} />
+                    <Route path="/resources" element={<ResourcesPage />} />
+                    <Route path="/contact" element={<ContactPage />} />
+                    <Route path="*" element={<NotFound />} />
+                  </Route>
+                </>
+              )}
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+};
 
 export default App;

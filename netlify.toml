@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Single-Page Application (SPA) wildcard redirect for main domain & subdomains
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
