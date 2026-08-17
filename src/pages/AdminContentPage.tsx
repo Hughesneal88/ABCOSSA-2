@@ -28,6 +28,7 @@ import { useVotePrice, useUpdateVotePrice, type AwardCategory, type NomineeRow, 
 import { usePayments, useHubtelSettings, useUpdateHubtelSettings } from "@/hooks/usePayments";
 import { formatGHS, type PaymentRecord } from "@/lib/hubtelClient";
 import { useSessionTimeout } from "@/hooks/useSessionTimeout";
+import { getMainSiteUrl } from "@/lib/domainRouting";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -440,7 +441,7 @@ export default function AdminContentPage() {
               <Clock className="w-3 h-3 text-amber-500" /> Auto-logout: 15m inactivity
             </span>
             <Button variant="outline" size="sm" asChild>
-              <a href="/" target="_blank" rel="noreferrer">
+              <a href={getMainSiteUrl()} target="_blank" rel="noreferrer">
                 View site <ExternalLink className="w-3.5 h-3.5 ml-1" />
               </a>
             </Button>

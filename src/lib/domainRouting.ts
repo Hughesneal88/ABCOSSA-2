@@ -19,3 +19,13 @@ export function getAdminSubdomainUrl(): string {
   const baseDomain = host.replace(/^www\./, "");
   return `${protocol}//admin.${baseDomain}`;
 }
+
+export function getMainSiteUrl(): string {
+  if (typeof window === "undefined") return "/";
+  const { protocol, host } = window.location;
+  if (host.startsWith("admin.") || host.startsWith("portal.")) {
+    const mainHost = host.replace(/^(admin|portal)\./, "");
+    return `${protocol}//${mainHost}`;
+  }
+  return "/";
+}
