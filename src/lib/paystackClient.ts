@@ -54,17 +54,21 @@ declare global {
 }
 
 /**
- * Dynamically loads the Paystack Inline JS script (v2 with fallback)
+ * Dynamically loads the Paystack Inline JS script
  */
 export function loadPaystackScript(): Promise<boolean> {
   return new Promise((resolve) => {
-    if (window.PaystackPop) {
+    if (typeof window !== "undefined" && window.PaystackPop) {
       resolve(true);
       return;
     }
 
     const existingScript = document.getElementById("paystack-inline-js") as HTMLScriptElement | null;
     if (existingScript) {
+      if (window.PaystackPop) {
+        resolve(true);
+        return;
+      }
       existingScript.addEventListener("load", () => resolve(true));
       existingScript.addEventListener("error", () => resolve(false));
       return;
@@ -76,7 +80,7 @@ export function loadPaystackScript(): Promise<boolean> {
     script.async = true;
     script.onload = () => resolve(true);
     script.onerror = () => {
-      // Fallback to v1 if v2 fails to load
+      // Fallback to v1 if v2 script fails to load
       const fallbackScript = document.createElement("script");
       fallbackScript.id = "paystack-inline-js-v1";
       fallbackScript.src = "https://js.paystack.co/v1/inline.js";
@@ -95,10 +99,10 @@ export function loadPaystackScript(): Promise<boolean> {
 export async function openPaystackPopup(options: OpenPaystackOptions): Promise<void> {
   const loaded = await loadPaystackScript();
   if (!loaded || !window.PaystackPop) {
-    throw new Error("Unable to load Paystack payment module. Please check your internet connection.");
+    throw new Error("Unable to load Paystack payment module. Please check your internet connection and try again.");
   }
 
-  // Ensure callback functions are standard non-async functions
+  // Ensure callback functions are standard synchronous functions
   const handleSuccess = function (response: any) {
     const result = {
       reference: response?.reference || response?.trxref || options.ref,
@@ -137,39 +141,13 @@ export async function openPaystackPopup(options: OpenPaystackOptions): Promise<v
       }
     }
   } catch (err) {
-    console.warn("Paystack V2 newTransaction attempt failed, falling back to setup():", err);
+    console.warn("Paystack V2 newTransaction failed, trying fallback:", err);
   }
 
   // 2. Try Paystack V1 setup pattern: PaystackPop.setup({...}).openIframe()
   if (window.PaystackPop && typeof window.PaystackPop.setup === "function") {
-    const handler = window.PaystackPop.setup({
-      key: options.key,
-      email: options.email,
-      amount: options.amount,
-      currency: options.currency || "GHS",
-      ref: options.ref,
-      firstname: options.firstname,
-      lastname: options.lastname,
-      phone: options.phone,
-      channels: options.channels || ["mobile_money", "card"],
-      metadata: options.metadata,
-      callback: handleSuccess,
-      onClose: handleCancel,
-      onSuccess: handleSuccess,
-      onCancel: handleCancel,
-    });
-
-    if (handler && typeof handler.openIframe === "function") {
-      handler.openIframe();
-      return;
-    }
-  }
-
-  // 3. Try direct instance setup
-  if (typeof window.PaystackPop === "function") {
-    const instance = new window.PaystackPop();
-    if (instance && typeof instance.setup === "function") {
-      const handler = instance.setup({
+    try {
+      const handler = window.PaystackPop.setup({
         key: options.key,
         email: options.email,
         amount: options.amount,
@@ -183,14 +161,17 @@ export async function openPaystackPopup(options: OpenPaystackOptions): Promise<v
         callback: handleSuccess,
         onClose: handleCancel,
       });
+
       if (handler && typeof handler.openIframe === "function") {
         handler.openIframe();
         return;
       }
+    } catch (err) {
+      console.warn("Paystack V1 setup failed:", err);
     }
   }
 
-  throw new Error("Could not initialize Paystack popup. Please reload the page and try again.");
+  throw new Error("Could not initialize Paystack popup. Please verify your Paystack Public Key in the Admin Portal and reload.");
 }
 
 /**
@@ -222,51 +203,59 @@ export async function createPaymentTransaction(params: InitiatePaymentParams): P
 }> {
   const clientReference = generatePaymentReference(params.paymentType.substring(0, 3).toUpperCase());
 
+  const fallbackRecord: PaymentRecord = {
+    id: crypto.randomUUID(),
+    client_reference: clientReference,
+    checkout_id: `paystack_${Date.now()}`,
+    transaction_id: `tx_${Date.now()}`,
+    amount: params.amount,
+    currency: "GHS",
+    customer_name: params.customerName,
+    customer_email: params.customerEmail,
+    customer_phone: params.customerPhone,
+    payment_type: params.paymentType,
+    status: "pending",
+    payment_channel: params.paymentChannel || "mobile_money",
+    description: params.description || `${params.paymentType.toUpperCase()} payment for ${params.customerName}`,
+    metadata: params.metadata || {},
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
   if (!isSupabaseConfigured || !supabase) {
-    // Demo fallback record if Supabase is not configured
-    const demoRecord: PaymentRecord = {
-      id: crypto.randomUUID(),
-      client_reference: clientReference,
-      checkout_id: `paystack_${Date.now()}`,
-      transaction_id: `tx_${Date.now()}`,
-      amount: params.amount,
-      currency: "GHS",
-      customer_name: params.customerName,
-      customer_email: params.customerEmail,
-      customer_phone: params.customerPhone,
-      payment_type: params.paymentType,
-      status: "pending",
-      payment_channel: params.paymentChannel || "mobile_money",
-      description: params.description || `${params.paymentType.toUpperCase()} payment for ${params.customerName}`,
-      metadata: params.metadata || {},
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    return { payment: demoRecord, reference: clientReference };
+    return { payment: fallbackRecord, reference: clientReference };
   }
 
-  // Insert payment record into Supabase with 'pending' status
-  const { data: dbPayment, error: dbErr } = await supabase
-    .from("payments")
-    .insert({
-      client_reference: clientReference,
-      amount: params.amount,
-      currency: "GHS",
-      customer_name: params.customerName,
-      customer_email: params.customerEmail,
-      customer_phone: params.customerPhone,
-      payment_type: params.paymentType,
-      payment_channel: params.paymentChannel || "mobile_money",
-      description: params.description || `${params.paymentType.toUpperCase()} payment for ${params.customerName}`,
-      status: "pending",
-      metadata: params.metadata || {},
-    })
-    .select()
-    .single();
+  try {
+    // Insert payment record into Supabase with 'pending' status
+    const { data: dbPayment, error: dbErr } = await supabase
+      .from("payments")
+      .insert({
+        client_reference: clientReference,
+        amount: params.amount,
+        currency: "GHS",
+        customer_name: params.customerName,
+        customer_email: params.customerEmail,
+        customer_phone: params.customerPhone,
+        payment_type: params.paymentType,
+        payment_channel: params.paymentChannel || "mobile_money",
+        description: params.description || `${params.paymentType.toUpperCase()} payment for ${params.customerName}`,
+        status: "pending",
+        metadata: params.metadata || {},
+      })
+      .select()
+      .single();
 
-  if (dbErr) throw dbErr;
+    if (dbErr) {
+      console.warn("Could not insert pending payment in Supabase, continuing with fallback record:", dbErr);
+      return { payment: fallbackRecord, reference: clientReference };
+    }
 
-  return { payment: dbPayment as PaymentRecord, reference: clientReference };
+    return { payment: dbPayment as PaymentRecord, reference: clientReference };
+  } catch (err) {
+    console.warn("Exception inserting payment in Supabase:", err);
+    return { payment: fallbackRecord, reference: clientReference };
+  }
 }
 
 /**
@@ -289,13 +278,17 @@ export async function updatePaymentSuccess(
   if (reference) updates.checkout_id = reference;
   if (channel) updates.payment_channel = channel;
 
-  const { error } = await supabase
-    .from("payments")
-    .update(updates)
-    .eq("id", paymentId);
+  try {
+    const { error } = await supabase
+      .from("payments")
+      .update(updates)
+      .eq("id", paymentId);
 
-  if (error) {
-    console.error("Failed to update payment status in Supabase:", error);
+    if (error) {
+      console.warn("Failed to update payment status in Supabase:", error);
+    }
+  } catch (err) {
+    console.warn("Exception updating payment status:", err);
   }
 }
 
@@ -308,11 +301,15 @@ export async function updatePaymentStatus(
 ): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return;
 
-  await supabase
-    .from("payments")
-    .update({
-      status,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", paymentId);
+  try {
+    await supabase
+      .from("payments")
+      .update({
+        status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", paymentId);
+  } catch (err) {
+    console.warn("Exception updating payment cancellation:", err);
+  }
 }

@@ -192,8 +192,10 @@ export function PaystackCheckoutModal({
         },
       });
     } catch (err) {
+      console.error("Payment initialization error:", err);
       setIsProcessing(false);
-      toast.error(err instanceof Error ? err.message : "Payment initialization failed");
+      const errMsg = err instanceof Error ? err.message : "Payment initialization failed";
+      toast.error(errMsg);
     }
   };
 
