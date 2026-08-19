@@ -32,7 +32,7 @@ export interface PaymentRecord {
   updated_at: string;
 }
 
-export interface PaystackPopOptions {
+export interface OpenPaystackOptions {
   key: string;
   email: string;
   amount: number; // in pesewas (amount * 100)
@@ -42,37 +42,19 @@ export interface PaystackPopOptions {
   lastname?: string;
   phone?: string;
   channels?: string[];
-  metadata?: {
-    custom_fields?: Array<{
-      display_name: string;
-      variable_name: string;
-      value: string;
-    }>;
-    [key: string]: unknown;
-  };
-  callback: (response: {
-    reference: string;
-    trans?: string;
-    status?: string;
-    message?: string;
-    transaction?: string;
-    trxref?: string;
-  }) => void;
-  onClose: () => void;
+  metadata?: Record<string, unknown>;
+  onSuccess: (response: { reference: string; transaction?: string; trxref?: string; [key: string]: unknown }) => void;
+  onCancel: () => void;
 }
 
 declare global {
   interface Window {
-    PaystackPop?: {
-      setup: (options: PaystackPopOptions) => {
-        openIframe: () => void;
-      };
-    };
+    PaystackPop?: any;
   }
 }
 
 /**
- * Dynamically loads the Paystack Inline JS script
+ * Dynamically loads the Paystack Inline JS script (v2 with fallback)
  */
 export function loadPaystackScript(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -81,7 +63,7 @@ export function loadPaystackScript(): Promise<boolean> {
       return;
     }
 
-    const existingScript = document.getElementById("paystack-inline-js");
+    const existingScript = document.getElementById("paystack-inline-js") as HTMLScriptElement | null;
     if (existingScript) {
       existingScript.addEventListener("load", () => resolve(true));
       existingScript.addEventListener("error", () => resolve(false));
@@ -90,12 +72,125 @@ export function loadPaystackScript(): Promise<boolean> {
 
     const script = document.createElement("script");
     script.id = "paystack-inline-js";
-    script.src = "https://js.paystack.co/v1/inline.js";
+    script.src = "https://js.paystack.co/v2/inline.js";
     script.async = true;
     script.onload = () => resolve(true);
-    script.onerror = () => resolve(false);
+    script.onerror = () => {
+      // Fallback to v1 if v2 fails to load
+      const fallbackScript = document.createElement("script");
+      fallbackScript.id = "paystack-inline-js-v1";
+      fallbackScript.src = "https://js.paystack.co/v1/inline.js";
+      fallbackScript.async = true;
+      fallbackScript.onload = () => resolve(true);
+      fallbackScript.onerror = () => resolve(false);
+      document.body.appendChild(fallbackScript);
+    };
     document.body.appendChild(script);
   });
+}
+
+/**
+ * Open Paystack popup supporting both V2 class and V1 setup patterns
+ */
+export async function openPaystackPopup(options: OpenPaystackOptions): Promise<void> {
+  const loaded = await loadPaystackScript();
+  if (!loaded || !window.PaystackPop) {
+    throw new Error("Unable to load Paystack payment module. Please check your internet connection.");
+  }
+
+  // Ensure callback functions are standard non-async functions
+  const handleSuccess = function (response: any) {
+    const result = {
+      reference: response?.reference || response?.trxref || options.ref,
+      transaction: response?.transaction || response?.reference || response?.trans,
+      trxref: response?.trxref || response?.reference,
+      status: response?.status || "success",
+    };
+    options.onSuccess(result);
+  };
+
+  const handleCancel = function () {
+    options.onCancel();
+  };
+
+  // 1. Try Paystack V2 class pattern: new PaystackPop().newTransaction(...)
+  try {
+    if (typeof window.PaystackPop === "function") {
+      const paystackInstance = new window.PaystackPop();
+      if (paystackInstance && typeof paystackInstance.newTransaction === "function") {
+        paystackInstance.newTransaction({
+          key: options.key,
+          email: options.email,
+          amount: options.amount,
+          currency: options.currency || "GHS",
+          ref: options.ref,
+          reference: options.ref,
+          firstname: options.firstname,
+          lastname: options.lastname,
+          phone: options.phone,
+          channels: options.channels || ["mobile_money", "card"],
+          metadata: options.metadata,
+          onSuccess: handleSuccess,
+          onCancel: handleCancel,
+        });
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("Paystack V2 newTransaction attempt failed, falling back to setup():", err);
+  }
+
+  // 2. Try Paystack V1 setup pattern: PaystackPop.setup({...}).openIframe()
+  if (window.PaystackPop && typeof window.PaystackPop.setup === "function") {
+    const handler = window.PaystackPop.setup({
+      key: options.key,
+      email: options.email,
+      amount: options.amount,
+      currency: options.currency || "GHS",
+      ref: options.ref,
+      firstname: options.firstname,
+      lastname: options.lastname,
+      phone: options.phone,
+      channels: options.channels || ["mobile_money", "card"],
+      metadata: options.metadata,
+      callback: handleSuccess,
+      onClose: handleCancel,
+      onSuccess: handleSuccess,
+      onCancel: handleCancel,
+    });
+
+    if (handler && typeof handler.openIframe === "function") {
+      handler.openIframe();
+      return;
+    }
+  }
+
+  // 3. Try direct instance setup
+  if (typeof window.PaystackPop === "function") {
+    const instance = new window.PaystackPop();
+    if (instance && typeof instance.setup === "function") {
+      const handler = instance.setup({
+        key: options.key,
+        email: options.email,
+        amount: options.amount,
+        currency: options.currency || "GHS",
+        ref: options.ref,
+        firstname: options.firstname,
+        lastname: options.lastname,
+        phone: options.phone,
+        channels: options.channels || ["mobile_money", "card"],
+        metadata: options.metadata,
+        callback: handleSuccess,
+        onClose: handleCancel,
+      });
+      if (handler && typeof handler.openIframe === "function") {
+        handler.openIframe();
+        return;
+      }
+    }
+  }
+
+  throw new Error("Could not initialize Paystack popup. Please reload the page and try again.");
 }
 
 /**

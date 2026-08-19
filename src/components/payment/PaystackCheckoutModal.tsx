@@ -28,7 +28,7 @@ import {
 } from "@/hooks/usePayments";
 import {
   formatGHS,
-  loadPaystackScript,
+  openPaystackPopup,
   type PaymentChannel,
 } from "@/lib/paystackClient";
 
@@ -123,14 +123,8 @@ export function PaystackCheckoutModal({
 
       setLastReference(reference);
 
-      // 2. Load Paystack Inline script
-      const scriptLoaded = await loadPaystackScript();
-      if (!scriptLoaded || !window.PaystackPop) {
-        throw new Error("Unable to load Paystack payment module. Please check your internet connection and try again.");
-      }
-
-      // 3. Trigger Paystack Inline Popup Prompt (charges MoMo or Card)
-      const handler = window.PaystackPop.setup({
+      // 2. Trigger Paystack Popup (supports both V2 and V1 inline scripts)
+      await openPaystackPopup({
         key: publicKey!,
         email: customerEmail.trim(),
         amount: Math.round(Number(amount) * 100), // Paystack accepts amount in pesewas
@@ -171,7 +165,7 @@ export function PaystackCheckoutModal({
           ...metadata,
           votes_count: totalVotes,
         },
-        callback: async (response) => {
+        onSuccess: async (response) => {
           try {
             await completePaymentMutation.mutateAsync({
               paymentId: payment.id,
@@ -192,13 +186,11 @@ export function PaystackCheckoutModal({
             setIsProcessing(false);
           }
         },
-        onClose: () => {
+        onCancel: () => {
           setIsProcessing(false);
           toast.info("Payment cancelled. No charge was made.");
         },
       });
-
-      handler.openIframe();
     } catch (err) {
       setIsProcessing(false);
       toast.error(err instanceof Error ? err.message : "Payment initialization failed");
