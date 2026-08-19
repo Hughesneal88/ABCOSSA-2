@@ -14,8 +14,8 @@ import {
   useVotePrice,
   type NomineeRow,
 } from "@/hooks/useNominees";
-import { formatGHS } from "@/lib/hubtelClient";
-import { HubtelCheckoutModal } from "@/components/payment/HubtelCheckoutModal";
+import { formatGHS } from "@/lib/paystackClient";
+import { PaystackCheckoutModal } from "@/components/payment/PaystackCheckoutModal";
 
 export default function NomineesPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
@@ -244,10 +244,11 @@ export default function NomineesPage() {
                           <Heart className="w-3.5 h-3.5" /> Free Vote
                         </Button>
                       ) : (
-                        <HubtelCheckoutModal
+                        <PaystackCheckoutModal
                           title={`Vote for ${nominee.name}`}
                           defaultAmount={votePrice * voteCount}
                           paymentType="voting"
+                          metadata={{ nominee_id: nominee.id, votes_count: voteCount }}
                           onSuccess={() => handlePaidVoteSuccess(nominee.id, nominee.votes_count, voteCount)}
                           trigger={
                             <Button

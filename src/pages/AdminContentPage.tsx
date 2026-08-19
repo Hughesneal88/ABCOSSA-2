@@ -25,8 +25,8 @@ import {
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
 import { useVotePrice, useUpdateVotePrice, type AwardCategory, type NomineeRow, type NomineePdfUpload } from "@/hooks/useNominees";
-import { usePayments, useHubtelSettings, useUpdateHubtelSettings } from "@/hooks/usePayments";
-import { formatGHS, type PaymentRecord } from "@/lib/hubtelClient";
+import { usePayments, usePaystackSettings, useUpdatePaystackSettings } from "@/hooks/usePayments";
+import { formatGHS, type PaymentRecord } from "@/lib/paystackClient";
 import { useSessionTimeout } from "@/hooks/useSessionTimeout";
 import { getMainSiteUrl } from "@/lib/domainRouting";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
@@ -58,6 +58,7 @@ const invalidateAll = (qc: ReturnType<typeof useQueryClient>) => {
   qc.invalidateQueries({ queryKey: ["nominee-pdfs"] });
   qc.invalidateQueries({ queryKey: ["award-categories"] });
   qc.invalidateQueries({ queryKey: ["admin-payments"] });
+  qc.invalidateQueries({ queryKey: ["paystack-settings"] });
   qc.invalidateQueries({ queryKey: ["hubtel-settings"] });
 };
 
@@ -3875,45 +3876,51 @@ function NomineesAdminPanel() {
 }
 
 function PaymentsAdminPanel() {
-  const { data: hubtelSettings, isLoading: loadingSettings } = useHubtelSettings();
-  const updateSettingsMutation = useUpdateHubtelSettings();
+  const { data: paystackSettings, isLoading: loadingSettings } = usePaystackSettings();
+  const updateSettingsMutation = useUpdatePaystackSettings();
   const { data: payments = [], isLoading: loadingPayments } = usePayments();
 
-  const [merchantNo, setMerchantNo] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
+  const [publicKey, setPublicKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const [merchantEmail, setMerchantEmail] = useState("");
+  const [currency, setCurrency] = useState("GHS");
   const [settingsInitialized, setSettingsInitialized] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
   useEffect(() => {
-    if (hubtelSettings && !settingsInitialized) {
-      setMerchantNo(hubtelSettings.merchantAccountNumber || "2019842");
-      setClientId(hubtelSettings.clientId || "");
-      setClientSecret(hubtelSettings.clientSecret || "");
+    if (paystackSettings && !settingsInitialized) {
+      setPublicKey(paystackSettings.publicKey || "");
+      setSecretKey(paystackSettings.secretKey || "");
+      setMerchantEmail(paystackSettings.merchantEmail || "");
+      setCurrency(paystackSettings.currency || "GHS");
       setSettingsInitialized(true);
     }
-  }, [hubtelSettings, settingsInitialized]);
+  }, [paystackSettings, settingsInitialized]);
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
     updateSettingsMutation.mutate(
       {
-        merchantAccountNumber: merchantNo,
-        clientId,
-        clientSecret,
+        publicKey,
+        secretKey,
+        merchantEmail,
+        currency,
       },
       {
         onSuccess: () => {
-          toast.success("Hubtel Merchant settings saved successfully!");
+          toast.success("Paystack Gateway settings saved successfully!");
         },
         onError: (err) => {
-          toast.error(err instanceof Error ? err.message : "Failed to save Hubtel settings");
+          toast.error(err instanceof Error ? err.message : "Failed to save Paystack settings");
         },
       }
     );
   };
+
+  const isTestMode = publicKey.startsWith("pk_test_");
+  const isLiveMode = publicKey.startsWith("pk_live_");
 
   const filteredPayments = payments.filter((p) => {
     const matchesStatus = statusFilter === "all" || p.status === statusFilter;
@@ -3934,71 +3941,110 @@ function PaymentsAdminPanel() {
 
   return (
     <div className="space-y-8">
-      {/* 1. Hubtel Settings Configuration */}
-      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+      {/* 1. Paystack Settings Configuration */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4 shadow-sm">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
-            <CreditCard className="w-5 h-5 text-primary" />
-            <h3 className="text-lg font-bold text-foreground">Hubtel Merchant Gateway Settings</h3>
+            <CreditCard className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+            <h3 className="text-lg font-bold text-foreground">Paystack Payment Gateway Settings</h3>
           </div>
-          <span className="text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-full font-semibold">
-            Active: Hubtel MoMo & Card
-          </span>
+          {isLiveMode ? (
+            <span className="text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-full font-semibold">
+              Live Mode (Active)
+            </span>
+          ) : isTestMode ? (
+            <span className="text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-2.5 py-1 rounded-full font-semibold">
+              Sandbox / Test Mode
+            </span>
+          ) : (
+            <span className="text-xs bg-muted text-muted-foreground border border-border px-2.5 py-1 rounded-full font-semibold">
+              Setup Needed
+            </span>
+          )}
         </div>
         <p className="text-xs text-muted-foreground">
-          Update your official Hubtel Merchant Account Number and API credentials. These settings control live payment processing for student dues, event tickets, donations, and nominations.
+          Configure your Paystack Ghana API keys to accept instant payments via MTN Mobile Money, Telecel Cash, AT Money, and Visa/Mastercard credit or debit cards.
         </p>
 
         {loadingSettings ? (
           <div className="py-6 flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading Hubtel merchant config...
+            <Loader2 className="w-4 h-4 animate-spin text-primary" /> Loading Paystack gateway configuration...
           </div>
         ) : (
           <form onSubmit={handleSaveSettings} className="space-y-4 pt-2">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <Label className="text-xs font-semibold">Hubtel Merchant Account Number</Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="lg:col-span-2">
+                <Label className="text-xs font-semibold">Paystack Public Key</Label>
                 <Input
-                  className="mt-1 font-mono text-sm font-semibold"
-                  placeholder="e.g. 2019842"
-                  value={merchantNo}
-                  onChange={(e) => setMerchantNo(e.target.value)}
+                  className="mt-1 font-mono text-xs font-medium"
+                  placeholder="pk_live_... or pk_test_..."
+                  value={publicKey}
+                  onChange={(e) => setPublicKey(e.target.value)}
                   required
                 />
-                <p className="text-[11px] text-muted-foreground mt-1">Found in your Hubtel Merchant Portal profile.</p>
+                <p className="text-[11px] text-muted-foreground mt-1">Used on client-side checkout popup to initialize payments securely.</p>
               </div>
 
-              <div>
-                <Label className="text-xs font-semibold">Client ID (API Key)</Label>
-                <Input
-                  className="mt-1 font-mono text-xs"
-                  placeholder="Hubtel API Client ID"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <Label className="text-xs font-semibold">Client Secret</Label>
+              <div className="lg:col-span-2">
+                <Label className="text-xs font-semibold">Paystack Secret Key (Optional / Backend)</Label>
                 <Input
                   type="password"
                   className="mt-1 font-mono text-xs"
-                  placeholder="••••••••••••••••"
-                  value={clientSecret}
-                  onChange={(e) => setClientSecret(e.target.value)}
+                  placeholder="sk_live_... or sk_test_..."
+                  value={secretKey}
+                  onChange={(e) => setSecretKey(e.target.value)}
                 />
+                <p className="text-[11px] text-muted-foreground mt-1">Used for server-side verification and Supabase Edge Functions.</p>
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold">Merchant Contact Email</Label>
+                <Input
+                  type="email"
+                  className="mt-1 text-xs"
+                  placeholder="payments@abcossa.org"
+                  value={merchantEmail}
+                  onChange={(e) => setMerchantEmail(e.target.value)}
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">Official email linked to your Paystack business.</p>
+              </div>
+
+              <div>
+                <Label className="text-xs font-semibold">Settlement Currency</Label>
+                <Select value={currency} onValueChange={setCurrency}>
+                  <SelectTrigger className="mt-1 text-xs font-semibold">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="GHS">GHS - Ghana Cedi</SelectItem>
+                    <SelectItem value="USD">USD - US Dollar</SelectItem>
+                    <SelectItem value="NGN">NGN - Nigerian Naira</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground mt-1">Default payment currency for transactions.</p>
               </div>
             </div>
 
-            <Button
-              type="submit"
-              size="sm"
-              disabled={updateSettingsMutation.isPending}
-              className="text-xs font-semibold gap-1.5"
-            >
-              {updateSettingsMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              Save Merchant Settings
-            </Button>
+            <div className="flex items-center justify-between flex-wrap gap-3 pt-2">
+              <Button
+                type="submit"
+                size="sm"
+                disabled={updateSettingsMutation.isPending}
+                className="text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                {updateSettingsMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Save Paystack Gateway Settings
+              </Button>
+
+              <a
+                href="https://dashboard.paystack.com/#/settings/developer"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-primary hover:underline flex items-center gap-1"
+              >
+                Get API Keys from Paystack Dashboard &rarr;
+              </a>
+            </div>
           </form>
         )}
       </section>
