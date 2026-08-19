@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { ShieldCheck, Loader2, Smartphone, CreditCard, CheckCircle2, Lock } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ShieldCheck, Loader2, Smartphone, CreditCard, CheckCircle2, Lock, AlertTriangle, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Dialog,
   DialogContent,
@@ -34,22 +35,25 @@ import {
 export interface PaystackCheckoutModalProps {
   title?: string;
   defaultAmount?: number;
+  unitPrice?: number;
   paymentType?: "dues" | "event" | "donation" | "voting";
   trigger?: React.ReactNode;
-  onSuccess?: () => void;
+  onSuccess?: (details?: { votesCount?: number; reference?: string }) => void;
   metadata?: Record<string, unknown>;
 }
 
 export function PaystackCheckoutModal({
   title = "Make Payment",
   defaultAmount = 50,
+  unitPrice = 1,
   paymentType = "dues",
   trigger,
   onSuccess,
   metadata = {},
 }: PaystackCheckoutModalProps) {
   const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState(defaultAmount);
+  const [votesCount, setVotesCount] = useState<number>(1);
+  const [amount, setAmount] = useState<number>(paymentType === "voting" ? (unitPrice * 1) : defaultAmount);
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -58,14 +62,34 @@ export function PaystackCheckoutModal({
   const [completed, setCompleted] = useState(false);
   const [lastReference, setLastReference] = useState("");
 
-  const { data: paystackSettings } = usePaystackSettings();
+  const { data: paystackSettings, isLoading: loadingSettings } = usePaystackSettings();
   const createPaymentMutation = useCreatePayment();
   const completePaymentMutation = useCompletePayment();
 
-  const isTestMode = paystackSettings?.publicKey?.startsWith("pk_test_");
+  const publicKey = paystackSettings?.publicKey?.trim();
+  const isConfigured = Boolean(publicKey && publicKey.length > 0);
+  const isTestMode = Boolean(publicKey?.startsWith("pk_test_"));
+
+  // Recalculate amount for voting whenever votesCount or unitPrice changes
+  useEffect(() => {
+    if (paymentType === "voting") {
+      setAmount(Math.max(1, votesCount) * (unitPrice > 0 ? unitPrice : 1));
+    }
+  }, [votesCount, unitPrice, paymentType]);
+
+  const handleVoteCountChange = (count: number) => {
+    const validCount = Math.max(1, Math.floor(count));
+    setVotesCount(validCount);
+    setAmount(validCount * (unitPrice > 0 ? unitPrice : 1));
+  };
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!isConfigured) {
+      toast.error("Paystack payment gateway is not configured. Please enter your Paystack Public Key in the Staff Admin Portal.");
+      return;
+    }
 
     if (!customerName.trim() || !customerEmail.trim() || !customerPhone.trim()) {
       toast.error("Please fill in all required customer details.");
@@ -80,7 +104,8 @@ export function PaystackCheckoutModal({
     setIsProcessing(true);
 
     try {
-      // 1. Create transaction in database
+      // 1. Create pending transaction in database
+      const totalVotes = paymentType === "voting" ? votesCount : 1;
       const { payment, reference } = await createPaymentMutation.mutateAsync({
         amount: Number(amount),
         customerName: customerName.trim(),
@@ -88,40 +113,25 @@ export function PaystackCheckoutModal({
         customerPhone: customerPhone.trim(),
         paymentType,
         paymentChannel: channel,
-        description: `${title} - ${paymentType.toUpperCase()}`,
-        metadata,
+        description: `${title} - ${paymentType.toUpperCase()} (${totalVotes} vote${totalVotes > 1 ? "s" : ""})`,
+        metadata: {
+          ...metadata,
+          votes_count: totalVotes,
+          unit_price: unitPrice,
+        },
       });
 
       setLastReference(reference);
 
-      // 2. Check if Paystack Public Key is configured
-      const publicKey = paystackSettings?.publicKey?.trim();
-
-      if (!publicKey) {
-        // Fallback for development / when key is not configured in Staff Portal
-        await completePaymentMutation.mutateAsync({
-          paymentId: payment.id,
-          transactionId: `demo_${Date.now()}`,
-          reference,
-          channel,
-        });
-
-        setCompleted(true);
-        setIsProcessing(false);
-        toast.success("Payment recorded (Demo Mode). Add your Paystack Public Key in Staff Portal for live payments.");
-        if (onSuccess) onSuccess();
-        return;
-      }
-
-      // 3. Load Paystack Inline script
+      // 2. Load Paystack Inline script
       const scriptLoaded = await loadPaystackScript();
       if (!scriptLoaded || !window.PaystackPop) {
-        throw new Error("Unable to load Paystack payment module. Please check your internet connection.");
+        throw new Error("Unable to load Paystack payment module. Please check your internet connection and try again.");
       }
 
-      // 4. Trigger Paystack Inline Popup
+      // 3. Trigger Paystack Inline Popup Prompt (charges MoMo or Card)
       const handler = window.PaystackPop.setup({
-        key: publicKey,
+        key: publicKey!,
         email: customerEmail.trim(),
         amount: Math.round(Number(amount) * 100), // Paystack accepts amount in pesewas
         currency: paystackSettings?.currency || "GHS",
@@ -152,8 +162,14 @@ export function PaystackCheckoutModal({
               variable_name: "title",
               value: title,
             },
+            {
+              display_name: "Votes Count",
+              variable_name: "votes_count",
+              value: String(totalVotes),
+            },
           ],
           ...metadata,
+          votes_count: totalVotes,
         },
         callback: async (response) => {
           try {
@@ -166,19 +182,19 @@ export function PaystackCheckoutModal({
 
             setCompleted(true);
             toast.success("Payment completed successfully via Paystack!");
-            if (onSuccess) onSuccess();
+            if (onSuccess) onSuccess({ votesCount: totalVotes, reference: response.reference || reference });
           } catch (err) {
             console.error("Error confirming payment:", err);
-            toast.success("Payment received! Confirmation is processing.");
+            toast.success("Payment received! Updating vote tally...");
             setCompleted(true);
-            if (onSuccess) onSuccess();
+            if (onSuccess) onSuccess({ votesCount: totalVotes, reference: response.reference || reference });
           } finally {
             setIsProcessing(false);
           }
         },
         onClose: () => {
           setIsProcessing(false);
-          toast.info("Payment window closed.");
+          toast.info("Payment cancelled. No charge was made.");
         },
       });
 
@@ -221,6 +237,16 @@ export function PaystackCheckoutModal({
           </DialogDescription>
         </DialogHeader>
 
+        {!isConfigured && !loadingSettings && (
+          <Alert variant="destructive" className="my-2 border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <AlertTitle className="text-xs font-semibold">Payment Gateway Setup Required</AlertTitle>
+            <AlertDescription className="text-xs text-amber-800 dark:text-amber-300">
+              The Paystack Public Key is not yet configured. An administrator must add the Paystack Public Key in the Staff Admin Portal (**Payments & Finance** tab) before online payments can be processed.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {completed ? (
           <div className="text-center py-6 space-y-4">
             <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto animate-bounce" />
@@ -228,6 +254,11 @@ export function PaystackCheckoutModal({
             <p className="text-xs text-muted-foreground max-w-xs mx-auto">
               Thank you, <span className="font-semibold text-foreground">{customerName}</span>. Your payment of{" "}
               <span className="font-bold text-foreground">{formatGHS(amount)}</span> has been confirmed.
+              {paymentType === "voting" && (
+                <span className="block mt-1 text-emerald-600 dark:text-emerald-400 font-semibold">
+                  {votesCount} vote{votesCount > 1 ? "s" : ""} added to candidate!
+                </span>
+              )}
             </p>
             {lastReference && (
               <div className="p-2.5 rounded-lg bg-muted/40 border border-border/40 text-[11px] font-mono text-muted-foreground">
@@ -240,18 +271,53 @@ export function PaystackCheckoutModal({
           </div>
         ) : (
           <form onSubmit={handlePay} className="space-y-4 pt-2">
-            <div>
-              <Label className="text-xs">Amount (GHS)</Label>
-              <Input
-                type="number"
-                min={1}
-                step="any"
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
-                className="mt-1 font-bold text-lg"
-                required
-              />
-            </div>
+            {/* If voting, show Vote Quantity selector */}
+            {paymentType === "voting" ? (
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold">Select Number of Votes</Label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {[1, 5, 10, 20, 50].map((count) => (
+                    <Button
+                      key={count}
+                      type="button"
+                      variant={votesCount === count ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handleVoteCountChange(count)}
+                      className="text-xs font-semibold h-8"
+                    >
+                      {count}
+                    </Button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">Custom votes:</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={5000}
+                    value={votesCount}
+                    onChange={(e) => handleVoteCountChange(Number(e.target.value))}
+                    className="h-8 text-xs font-bold w-28"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    ({formatGHS(unitPrice)}/vote)
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <Label className="text-xs">Amount (GHS)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  step="any"
+                  value={amount}
+                  onChange={(e) => setAmount(Number(e.target.value))}
+                  className="mt-1 font-bold text-lg"
+                  required
+                />
+              </div>
+            )}
 
             <div>
               <Label className="text-xs">Full Name</Label>
@@ -278,7 +344,7 @@ export function PaystackCheckoutModal({
               </div>
 
               <div>
-                <Label className="text-xs">Phone Number</Label>
+                <Label className="text-xs">Phone Number (MoMo)</Label>
                 <Input
                   type="tel"
                   placeholder="024XXXXXXX"
@@ -312,8 +378,8 @@ export function PaystackCheckoutModal({
 
             <Button
               type="submit"
-              disabled={isProcessing || createPaymentMutation.isPending}
-              className="w-full text-xs font-semibold rounded-xl gap-2 bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-600 dark:hover:bg-emerald-700"
+              disabled={isProcessing || createPaymentMutation.isPending || !isConfigured}
+              className="w-full text-xs font-semibold rounded-xl gap-2 bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-600 dark:hover:bg-emerald-700 disabled:opacity-50"
             >
               {isProcessing || createPaymentMutation.isPending ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -322,7 +388,7 @@ export function PaystackCheckoutModal({
               ) : (
                 <Smartphone className="w-4 h-4" />
               )}
-              Pay {formatGHS(amount)} with Paystack
+              {isConfigured ? `Pay ${formatGHS(amount)} with Paystack` : "Paystack Key Required"}
             </Button>
           </form>
         )}

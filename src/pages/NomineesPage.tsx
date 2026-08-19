@@ -20,8 +20,6 @@ import { PaystackCheckoutModal } from "@/components/payment/PaystackCheckoutModa
 export default function NomineesPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [targetNominee, setTargetNominee] = useState<NomineeRow | null>(null);
-  const [voteCount, setVoteCount] = useState<number>(1);
 
   const { data: categories = [], isLoading: loadingCategories } = useAwardCategories();
   const { data: nominees = [], isLoading: loadingNominees } = useNominees();
@@ -50,7 +48,6 @@ export default function NomineesPage() {
       {
         onSuccess: () => {
           toast.success(`Successfully added ${votesToAdd} vote(s)! Thank you for supporting ABCOSSA awards.`);
-          setTargetNominee(null);
         },
         onError: (err) => {
           toast.error(err instanceof Error ? err.message : "Failed to record votes");
@@ -246,10 +243,13 @@ export default function NomineesPage() {
                       ) : (
                         <PaystackCheckoutModal
                           title={`Vote for ${nominee.name}`}
-                          defaultAmount={votePrice * voteCount}
+                          defaultAmount={votePrice}
+                          unitPrice={votePrice}
                           paymentType="voting"
-                          metadata={{ nominee_id: nominee.id, votes_count: voteCount }}
-                          onSuccess={() => handlePaidVoteSuccess(nominee.id, nominee.votes_count, voteCount)}
+                          metadata={{ nominee_id: nominee.id }}
+                          onSuccess={(details) =>
+                            handlePaidVoteSuccess(nominee.id, nominee.votes_count, details?.votesCount ?? 1)
+                          }
                           trigger={
                             <Button
                               size="sm"
