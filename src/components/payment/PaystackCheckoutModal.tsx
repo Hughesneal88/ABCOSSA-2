@@ -123,6 +123,9 @@ export function PaystackCheckoutModal({
 
       setLastReference(reference);
 
+      // Close the details modal to release Radix focus trap and backdrop so Paystack popup is fully interactive
+      setOpen(false);
+
       // 2. Trigger Paystack Popup (supports both V2 and V1 inline scripts)
       await openPaystackPopup({
         key: publicKey!,
