@@ -14,6 +14,7 @@ export type AwardCategory = {
 export type NomineeRow = {
   id: string;
   category_id: string | null;
+  nominee_code: string | null;
   name: string;
   department: string | null;
   level: string | null;
@@ -33,6 +34,14 @@ export type NomineePdfUpload = {
   parsed_count: number;
   created_at: string;
 };
+
+export interface UssdSettings {
+  provider: string;
+  shortcode: string;
+  eventCode: string;
+  enabled: boolean;
+  instructions: string;
+}
 
 export function useAwardCategories() {
   return useQuery({
@@ -127,11 +136,142 @@ export function useUpdateVotePrice() {
   });
 }
 
+export function useUssdSettings() {
+  return useQuery({
+    queryKey: ["ussd-settings"],
+    queryFn: async (): Promise<UssdSettings> => {
+      if (!supabase) {
+        return {
+          provider: "arkesel",
+          shortcode: "*920*22#",
+          eventCode: "22",
+          enabled: true,
+          instructions:
+            "1. Dial the USSD code on any network (MTN, Telecel, AT)\n2. Enter Candidate Code\n3. Enter Number of Votes\n4. Authorize Mobile Money PIN prompt",
+        };
+      }
+
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("key, value")
+        .in("key", [
+          "ussd_provider",
+          "ussd_shortcode",
+          "ussd_event_code",
+          "ussd_enabled",
+          "ussd_instructions",
+        ]);
+
+      if (error) throw error;
+
+      const map = Object.fromEntries(
+        (data as { key: string; value: string }[]).map((r) => [r.key, r.value])
+      );
+
+      return {
+        provider: map["ussd_provider"] || "arkesel",
+        shortcode: map["ussd_shortcode"] || "*920*22#",
+        eventCode: map["ussd_event_code"] || "22",
+        enabled: map["ussd_enabled"] !== "false",
+        instructions:
+          map["ussd_instructions"] ||
+          "1. Dial the USSD code on any network (MTN, Telecel, AT)\n2. Enter Candidate Code\n3. Enter Number of Votes\n4. Authorize Mobile Money PIN prompt",
+      };
+    },
+    enabled: isSupabaseConfigured,
+  });
+}
+
+export function useUpdateUssdSettings() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (settings: UssdSettings) => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      const updates = [
+        { key: "ussd_provider", value: settings.provider.trim() },
+        { key: "ussd_shortcode", value: settings.shortcode.trim() },
+        { key: "ussd_event_code", value: settings.eventCode.trim() },
+        { key: "ussd_enabled", value: settings.enabled ? "true" : "false" },
+        { key: "ussd_instructions", value: settings.instructions.trim() },
+      ];
+
+      for (const item of updates) {
+        const { error } = await supabase
+          .from("site_settings")
+          .upsert(item, { onConflict: "key" });
+        if (error) throw error;
+      }
+
+      return settings;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ussd-settings"] });
+    },
+  });
+}
+
+export function useAutoGenerateNomineeCodes() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      // Fetch all nominees ordered by creation date
+      const { data: allNominees, error: fetchErr } = await supabase
+        .from("nominees")
+        .select("id, nominee_code, created_at")
+        .order("created_at", { ascending: true });
+
+      if (fetchErr) throw fetchErr;
+      if (!allNominees || allNominees.length === 0) return 0;
+
+      // Find highest existing numerical code
+      let currentMax = 100;
+      allNominees.forEach((n) => {
+        const num = parseInt(n.nominee_code || "", 10);
+        if (!isNaN(num) && num > currentMax) {
+          currentMax = num;
+        }
+      });
+
+      let updatedCount = 0;
+      for (const nominee of allNominees) {
+        if (!nominee.nominee_code || nominee.nominee_code.trim() === "") {
+          currentMax += 1;
+          const { error: updErr } = await supabase
+            .from("nominees")
+            .update({ nominee_code: currentMax.toString() })
+            .eq("id", nominee.id);
+
+          if (!updErr) updatedCount += 1;
+        }
+      }
+
+      return updatedCount;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+    },
+  });
+}
+
 export function useVoteNominee() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ nomineeId, currentVotes, voteIncrement = 1 }: { nomineeId: string; currentVotes: number; voteIncrement?: number }) => {
+    mutationFn: async ({
+      nomineeId,
+      currentVotes,
+      voteIncrement = 1,
+    }: {
+      nomineeId: string;
+      currentVotes: number;
+      voteIncrement?: number;
+    }) => {
       if (!supabase) throw new Error("Supabase client is not available");
 
       const { data, error } = await supabase

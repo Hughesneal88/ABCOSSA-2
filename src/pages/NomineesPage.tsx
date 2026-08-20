@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Award, Download, FileText, Heart, Search, Sparkles, CheckCircle2, ShoppingCart } from "lucide-react";
+import { Award, Download, FileText, Heart, Search, Sparkles, PhoneCall, Smartphone, Hash } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -12,10 +12,12 @@ import {
   useNomineePdfs,
   useVoteNominee,
   useVotePrice,
+  useUssdSettings,
   type NomineeRow,
 } from "@/hooks/useNominees";
 import { formatGHS } from "@/lib/paystackClient";
 import { PaystackCheckoutModal } from "@/components/payment/PaystackCheckoutModal";
+import { UssdInstructionsModal } from "@/components/voting/UssdInstructionsModal";
 
 export default function NomineesPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
@@ -25,6 +27,7 @@ export default function NomineesPage() {
   const { data: nominees = [], isLoading: loadingNominees } = useNominees();
   const { data: pdfDocs = [] } = useNomineePdfs();
   const { data: votePrice = 1.0 } = useVotePrice();
+  const { data: ussdSettings } = useUssdSettings();
 
   const voteMutation = useVoteNominee();
 
@@ -58,18 +61,24 @@ export default function NomineesPage() {
 
   const filteredNominees = nominees.filter((n) => {
     const matchesCategory = selectedCategory === "all" || n.category_id === selectedCategory;
+    const query = searchQuery.toLowerCase().trim();
     const matchesSearch =
-      n.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (n.department && n.department.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (n.bio && n.bio.toLowerCase().includes(searchQuery.toLowerCase()));
+      !query ||
+      n.name.toLowerCase().includes(query) ||
+      (n.nominee_code && n.nominee_code.toLowerCase().includes(query)) ||
+      (n.department && n.department.toLowerCase().includes(query)) ||
+      (n.bio && n.bio.toLowerCase().includes(query));
     return matchesCategory && matchesSearch;
   });
+
+  const ussdShortcode = ussdSettings?.shortcode || "*920*22#";
+  const ussdEnabled = ussdSettings?.enabled !== false;
 
   return (
     <div className="min-h-screen pt-28 pb-20 bg-gradient-to-b from-background via-background/95 to-muted/30">
       <div className="container mx-auto px-4 lg:px-8">
         {/* Header Hero */}
-        <div className="max-w-4xl mx-auto text-center mb-12 space-y-4">
+        <div className="max-w-4xl mx-auto text-center mb-10 space-y-4">
           <Badge variant="outline" className="px-3.5 py-1 text-sm border-primary/30 text-primary bg-primary/5 rounded-full inline-flex items-center gap-1.5 font-semibold">
             <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" /> ABCOSSA Excellence Awards
           </Badge>
@@ -78,13 +87,59 @@ export default function NomineesPage() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Discover outstanding students, researchers, and student leaders nominated for ABCOSSA awards.
-            Cast your votes and download official PDF nominee lists.
+            Cast your votes online or via USSD shortcode, and download official PDF lists.
           </p>
 
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
-            <span>Voting Price: {votePrice === 0 ? "Free" : `${formatGHS(votePrice)} / vote`}</span>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+              <span>Voting Price: {votePrice === 0 ? "Free" : `${formatGHS(votePrice)} / vote`}</span>
+            </div>
+
+            {ussdEnabled && (
+              <UssdInstructionsModal
+                trigger={
+                  <button type="button" className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 transition-colors text-xs font-semibold cursor-pointer">
+                    <Smartphone className="w-3.5 h-3.5 text-primary" />
+                    <span>USSD Voting: Dial {ussdShortcode}</span>
+                  </button>
+                }
+              />
+            )}
           </div>
         </div>
+
+        {/* USSD Promo Banner */}
+        {ussdEnabled && (
+          <div className="max-w-6xl mx-auto mb-10">
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-primary/10 to-teal-500/10 border border-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                  <PhoneCall className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
+                    Vote via Mobile USSD Code
+                    <Badge variant="secondary" className="text-[10px] px-2 py-0.5">MTN • Telecel • AT</Badge>
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    No internet required. Dial <strong className="text-foreground">{ussdShortcode}</strong> and enter candidate&apos;s 3-digit code to vote instantly.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <UssdInstructionsModal
+                  trigger={
+                    <Button size="sm" variant="outline" className="text-xs font-semibold w-full sm:w-auto gap-1.5">
+                      <Smartphone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      View USSD Guide
+                    </Button>
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* PDF Documents Section */}
         {pdfDocs.length > 0 && (
@@ -152,7 +207,7 @@ export default function NomineesPage() {
             <div className="relative w-full md:w-72">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search nominee by name, dept..."
+                placeholder="Search nominee by name, code, dept..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9 bg-card/70 border-border/60"
@@ -200,11 +255,18 @@ export default function NomineesPage() {
                           ) : (
                             <Badge variant="secondary" className="text-xs">General Nominee</Badge>
                           )}
-                          {nominee.level && (
-                            <Badge variant="secondary" className="text-[11px]">
-                              {nominee.level}
-                            </Badge>
-                          )}
+                          <div className="flex items-center gap-1">
+                            {nominee.nominee_code && (
+                              <Badge variant="outline" className="text-[11px] font-mono font-bold bg-muted border-border/60 text-foreground">
+                                Code: {nominee.nominee_code}
+                              </Badge>
+                            )}
+                            {nominee.level && (
+                              <Badge variant="secondary" className="text-[11px]">
+                                {nominee.level}
+                              </Badge>
+                            )}
+                          </div>
                         </div>
                         <CardTitle className="text-xl font-bold text-foreground group-hover:text-primary transition-colors">
                           {nominee.name}
@@ -224,42 +286,73 @@ export default function NomineesPage() {
                       </CardContent>
                     </div>
 
-                    <div className="p-6 pt-0 mt-4 border-t border-border/40 pt-4 flex items-center justify-between bg-muted/20">
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
-                        <Heart className="w-4 h-4 text-rose-500 fill-rose-500/20" />
-                        <span className="font-bold text-foreground">{nominee.votes_count}</span>
-                        <span>{nominee.votes_count === 1 ? "Vote" : "Votes"}</span>
+                    <div className="p-5 pt-3 mt-4 border-t border-border/40 flex flex-col gap-3 bg-muted/20">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
+                          <Heart className="w-4 h-4 text-rose-500 fill-rose-500/20" />
+                          <span className="font-bold text-foreground">{nominee.votes_count}</span>
+                          <span>{nominee.votes_count === 1 ? "Vote" : "Votes"}</span>
+                        </div>
+                        {nominee.nominee_code && ussdEnabled && (
+                          <span className="text-[11px] font-mono text-muted-foreground">
+                            Dial: {ussdShortcode.replace(/#$/, "")}*{nominee.nominee_code}#
+                          </span>
+                        )}
                       </div>
 
-                      {votePrice === 0 ? (
-                        <Button
-                          size="sm"
-                          disabled={voteMutation.isPending}
-                          onClick={() => handleFreeVote(nominee.id, nominee.votes_count)}
-                          className="rounded-lg gap-1.5 text-xs font-semibold"
-                        >
-                          <Heart className="w-3.5 h-3.5" /> Free Vote
-                        </Button>
-                      ) : (
-                        <PaystackCheckoutModal
-                          title={`Vote for ${nominee.name}`}
-                          defaultAmount={votePrice}
-                          unitPrice={votePrice}
-                          paymentType="voting"
-                          metadata={{ nominee_id: nominee.id }}
-                          onSuccess={(details) =>
-                            handlePaidVoteSuccess(nominee.id, nominee.votes_count, details?.votesCount ?? 1)
-                          }
-                          trigger={
-                            <Button
-                              size="sm"
-                              className="rounded-lg gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground"
-                            >
-                              <Heart className="w-3.5 h-3.5" /> Vote ({formatGHS(votePrice)})
-                            </Button>
-                          }
-                        />
-                      )}
+                      <div className="grid grid-cols-2 gap-2">
+                        {/* Option 1: Online Vote */}
+                        {votePrice === 0 ? (
+                          <Button
+                            size="sm"
+                            disabled={voteMutation.isPending}
+                            onClick={() => handleFreeVote(nominee.id, nominee.votes_count)}
+                            className="rounded-lg gap-1.5 text-xs font-semibold w-full"
+                          >
+                            <Heart className="w-3.5 h-3.5" /> Free Vote
+                          </Button>
+                        ) : (
+                          <PaystackCheckoutModal
+                            title={`Vote for ${nominee.name}`}
+                            defaultAmount={votePrice}
+                            unitPrice={votePrice}
+                            paymentType="voting"
+                            metadata={{ nominee_id: nominee.id }}
+                            onSuccess={(details) =>
+                              handlePaidVoteSuccess(nominee.id, nominee.votes_count, details?.votesCount ?? 1)
+                            }
+                            trigger={
+                              <Button
+                                size="sm"
+                                className="rounded-lg gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                              >
+                                <Heart className="w-3.5 h-3.5" /> Vote ({formatGHS(votePrice)})
+                              </Button>
+                            }
+                          />
+                        )}
+
+                        {/* Option 2: USSD Vote */}
+                        {ussdEnabled ? (
+                          <UssdInstructionsModal
+                            nomineeName={nominee.name}
+                            nomineeCode={nominee.nominee_code}
+                            categoryTitle={categoryObj?.title}
+                            trigger={
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="rounded-lg gap-1.5 text-xs font-semibold w-full"
+                              >
+                                <PhoneCall className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                USSD
+                              </Button>
+                            }
+                          />
+                        ) : (
+                          <div />
+                        )}
+                      </div>
                     </div>
                   </Card>
                 );

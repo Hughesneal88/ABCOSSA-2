@@ -22,9 +22,22 @@ import {
   Award,
   CreditCard,
   Clock,
+  Smartphone,
+  PhoneCall,
+  Copy,
+  Hash,
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
-import { useVotePrice, useUpdateVotePrice, type AwardCategory, type NomineeRow, type NomineePdfUpload } from "@/hooks/useNominees";
+import {
+  useVotePrice,
+  useUpdateVotePrice,
+  useUssdSettings,
+  useUpdateUssdSettings,
+  useAutoGenerateNomineeCodes,
+  type AwardCategory,
+  type NomineeRow,
+  type NomineePdfUpload,
+} from "@/hooks/useNominees";
 import { usePayments, usePaystackSettings, useUpdatePaystackSettings } from "@/hooks/usePayments";
 import { formatGHS, type PaymentRecord } from "@/lib/paystackClient";
 import { useSessionTimeout } from "@/hooks/useSessionTimeout";
@@ -3152,12 +3165,32 @@ function NomineesAdminPanel() {
   const [votePriceInput, setVotePriceInput] = useState<number>(1.0);
   const [votePriceInitialized, setVotePriceInitialized] = useState(false);
 
+  // USSD & Arkesel Settings
+  const { data: ussdSettings } = useUssdSettings();
+  const updateUssdMutation = useUpdateUssdSettings();
+  const autoGenCodesMutation = useAutoGenerateNomineeCodes();
+  const [ussdShortcode, setUssdShortcode] = useState("*920*22#");
+  const [ussdEventCode, setUssdEventCode] = useState("22");
+  const [ussdEnabled, setUssdEnabled] = useState(true);
+  const [ussdInstructions, setUssdInstructions] = useState("");
+  const [ussdInitialized, setUssdInitialized] = useState(false);
+
   useEffect(() => {
     if (currentVotePrice !== undefined && !votePriceInitialized) {
       setVotePriceInput(currentVotePrice);
       setVotePriceInitialized(true);
     }
   }, [currentVotePrice, votePriceInitialized]);
+
+  useEffect(() => {
+    if (ussdSettings && !ussdInitialized) {
+      setUssdShortcode(ussdSettings.shortcode || "*920*22#");
+      setUssdEventCode(ussdSettings.eventCode || "22");
+      setUssdEnabled(ussdSettings.enabled);
+      setUssdInstructions(ussdSettings.instructions || "");
+      setUssdInitialized(true);
+    }
+  }, [ussdSettings, ussdInitialized]);
 
   // Category management
   const [newCatTitle, setNewCatTitle] = useState("");
@@ -3169,6 +3202,7 @@ function NomineesAdminPanel() {
 
   // Manual Nominee Addition & Editing
   const [manualName, setManualName] = useState("");
+  const [manualCode, setManualCode] = useState("");
   const [manualDept, setManualDept] = useState("");
   const [manualLevel, setManualLevel] = useState("");
   const [manualCatId, setManualCatId] = useState("none");
@@ -3177,6 +3211,7 @@ function NomineesAdminPanel() {
 
   const [editingNomineeId, setEditingNomineeId] = useState<string | null>(null);
   const [editNomineeName, setEditNomineeName] = useState("");
+  const [editNomineeCode, setEditNomineeCode] = useState("");
   const [editNomineeDept, setEditNomineeDept] = useState("");
   const [editNomineeLevel, setEditNomineeLevel] = useState("");
   const [editNomineeCatId, setEditNomineeCatId] = useState("none");
@@ -3229,9 +3264,44 @@ function NomineesAdminPanel() {
     });
   };
 
+  const handleSaveUssdSettings = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateUssdMutation.mutate(
+      {
+        provider: "arkesel",
+        shortcode: ussdShortcode.trim(),
+        eventCode: ussdEventCode.trim(),
+        enabled: ussdEnabled,
+        instructions: ussdInstructions.trim(),
+      },
+      {
+        onSuccess: () => {
+          toast.success("Arkesel USSD voting settings saved successfully!");
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error ? err.message : "Failed to save USSD settings");
+        },
+      }
+    );
+  };
+
+  const handleAutoGenerateCodes = () => {
+    autoGenCodesMutation.mutate(undefined, {
+      onSuccess: (count) => {
+        toast.success(`Generated candidate voting codes for ${count} nominees!`);
+        refetchNominees();
+        qc.invalidateQueries({ queryKey: ["nominees"] });
+      },
+      onError: (err) => {
+        toast.error(err instanceof Error ? err.message : "Failed to generate codes");
+      },
+    });
+  };
+
   const startEditNominee = (n: NomineeRow) => {
     setEditingNomineeId(n.id);
     setEditNomineeName(n.name);
+    setEditNomineeCode(n.nominee_code || "");
     setEditNomineeDept(n.department || "");
     setEditNomineeLevel(n.level || "");
     setEditNomineeCatId(n.category_id || "none");
@@ -3247,6 +3317,7 @@ function NomineesAdminPanel() {
       .from("nominees")
       .update({
         name: editNomineeName.trim(),
+        nominee_code: editNomineeCode.trim() || null,
         department: editNomineeDept.trim() || null,
         level: editNomineeLevel.trim() || null,
         category_id: editNomineeCatId !== "none" ? editNomineeCatId : null,
@@ -3394,7 +3465,13 @@ function NomineesAdminPanel() {
         }
       }
 
-      // 2. Map nominees with resolved category IDs
+      // 2. Map nominees with resolved category IDs and sequential nominee codes
+      let nextCode = 100;
+      nominees.forEach((n) => {
+        const num = parseInt(n.nominee_code || "", 10);
+        if (!isNaN(num) && num > nextCode) nextCode = num;
+      });
+
       const rowsToInsert = parsedNominees.map((n) => {
         let categoryId: string | null = null;
         if (selectedDefaultCategory && selectedDefaultCategory !== "none") {
@@ -3404,8 +3481,11 @@ function NomineesAdminPanel() {
           if (matchId) categoryId = matchId;
         }
 
+        nextCode += 1;
+
         return {
           name: n.name.trim(),
+          nominee_code: nextCode.toString(),
           department: n.department ? n.department.trim() : null,
           level: n.level ? n.level.trim() : null,
           bio: n.bio ? n.bio.trim() : "",
@@ -3487,6 +3567,7 @@ function NomineesAdminPanel() {
     try {
       const { error } = await supabase.from("nominees").insert({
         name: manualName.trim(),
+        nominee_code: manualCode.trim() || null,
         department: manualDept.trim() || null,
         level: manualLevel.trim() || null,
         category_id: manualCatId !== "none" ? manualCatId : null,
@@ -3496,6 +3577,7 @@ function NomineesAdminPanel() {
       if (error) throw error;
       toast.success("Nominee added successfully!");
       setManualName("");
+      setManualCode("");
       setManualDept("");
       setManualLevel("");
       setManualBio("");
@@ -3584,6 +3666,134 @@ function NomineesAdminPanel() {
           >
             {updateVotePriceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             Save Vote Price
+          </Button>
+        </form>
+      </section>
+
+      {/* 0b. Arkesel USSD Voting Configuration Card */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Smartphone className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+            <div>
+              <h3 className="text-lg font-bold text-foreground">USSD Voting Configuration (Arkesel *920#)</h3>
+              <p className="text-xs text-muted-foreground">
+                Configure telecom shortcodes for USSD dial voting across MTN MoMo, Telecel Cash, and AT Money.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={autoGenCodesMutation.isPending}
+              onClick={handleAutoGenerateCodes}
+              className="text-xs font-semibold gap-1.5"
+            >
+              {autoGenCodesMutation.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Hash className="w-3.5 h-3.5 text-primary" />
+              )}
+              Auto-Assign Nominee Codes
+            </Button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSaveUssdSettings} className="space-y-4 pt-2">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label className="text-xs font-semibold">USSD Shortcode</Label>
+              <Input
+                className="mt-1 font-mono font-bold text-sm"
+                placeholder="e.g. *920*22#"
+                value={ussdShortcode}
+                onChange={(e) => setUssdShortcode(e.target.value)}
+                required
+              />
+              <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                The master code voters dial on their phones.
+              </span>
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold">Event / Merchant Extension</Label>
+              <Input
+                className="mt-1 font-mono text-sm"
+                placeholder="e.g. 22"
+                value={ussdEventCode}
+                onChange={(e) => setUssdEventCode(e.target.value)}
+              />
+              <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                Your Arkesel assigned event code.
+              </span>
+            </div>
+
+            <div className="flex flex-col justify-center">
+              <div className="flex items-center gap-2 pt-2">
+                <Switch
+                  id="ussd-enabled-toggle"
+                  checked={ussdEnabled}
+                  onCheckedChange={setUssdEnabled}
+                />
+                <Label htmlFor="ussd-enabled-toggle" className="text-xs font-semibold cursor-pointer">
+                  {ussdEnabled ? "USSD Voting Active" : "USSD Voting Disabled"}
+                </Label>
+              </div>
+              <span className="text-[10px] text-muted-foreground mt-1 block">
+                Controls USSD display across candidate cards and voting banners.
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-xs font-semibold">USSD Instructions (Displayed to Voters)</Label>
+            <Textarea
+              className="mt-1 text-xs"
+              rows={3}
+              value={ussdInstructions}
+              onChange={(e) => setUssdInstructions(e.target.value)}
+              placeholder="Step 1. Dial *920*22# on any network..."
+            />
+          </div>
+
+          {/* Arkesel Webhook URL Box */}
+          <div className="p-3.5 rounded-xl bg-muted/40 border border-border/60 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                <PhoneCall className="w-3.5 h-3.5 text-emerald-500" /> Arkesel Webhook URL (Paste in Arkesel Dashboard)
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 text-[11px] font-semibold gap-1 text-primary"
+                onClick={() => {
+                  const url = `${window.location.origin}/functions/v1/arkesel-ussd-webhook`;
+                  navigator.clipboard.writeText(url);
+                  toast.success("Copied Arkesel webhook URL!");
+                }}
+              >
+                <Copy className="w-3 h-3" /> Copy URL
+              </Button>
+            </div>
+            <code className="text-[11px] font-mono text-muted-foreground block select-all bg-background p-2 rounded border border-border/40">
+              {window.location.origin}/functions/v1/arkesel-ussd-webhook
+            </code>
+            <p className="text-[10px] text-muted-foreground">
+              When a vote is cast via Arkesel USSD, Arkesel notifies this endpoint to credit candidate votes automatically.
+            </p>
+          </div>
+
+          <Button
+            type="submit"
+            size="sm"
+            disabled={updateUssdMutation.isPending}
+            className="text-xs font-semibold gap-1.5"
+          >
+            {updateUssdMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Save USSD Settings
           </Button>
         </form>
       </section>
@@ -3796,9 +4006,15 @@ function NomineesAdminPanel() {
         <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
           <h3 className="text-base font-bold text-foreground">Add Nominee Manually</h3>
           <form onSubmit={handleAddNomineeManual} className="space-y-3">
-            <div>
-              <Label className="text-xs">Nominee Full Name</Label>
-              <Input className="mt-1" placeholder="e.g. Ama Serwaa" value={manualName} onChange={(e) => setManualName(e.target.value)} required />
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2">
+                <Label className="text-xs">Nominee Full Name</Label>
+                <Input className="mt-1" placeholder="e.g. Ama Serwaa" value={manualName} onChange={(e) => setManualName(e.target.value)} required />
+              </div>
+              <div>
+                <Label className="text-xs">USSD Code (e.g. 104)</Label>
+                <Input className="mt-1 font-mono text-xs" placeholder="e.g. 104" value={manualCode} onChange={(e) => setManualCode(e.target.value)} />
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
@@ -3853,10 +4069,14 @@ function NomineesAdminPanel() {
                 return (
                   <form key={n.id} onSubmit={handleSaveNomineeEdit} className="p-4 bg-muted/30 space-y-3 text-xs">
                     <h4 className="font-bold text-foreground">Edit Nominee Profile</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="md:col-span-2">
                         <Label className="text-xs">Full Name</Label>
                         <Input className="mt-1 text-xs" value={editNomineeName} onChange={(e) => setEditNomineeName(e.target.value)} required />
+                      </div>
+                      <div>
+                        <Label className="text-xs">USSD Code</Label>
+                        <Input className="mt-1 text-xs font-mono font-bold" placeholder="e.g. 104" value={editNomineeCode} onChange={(e) => setEditNomineeCode(e.target.value)} />
                       </div>
                       <div>
                         <Label className="text-xs">Award Category</Label>
@@ -3884,7 +4104,7 @@ function NomineesAdminPanel() {
                         <Label className="text-xs">Votes Count Override</Label>
                         <Input className="mt-1 text-xs" type="number" min={0} value={editNomineeVotes} onChange={(e) => setEditNomineeVotes(Number(e.target.value))} />
                       </div>
-                      <div className="md:col-span-2">
+                      <div className="md:col-span-3">
                         <Label className="text-xs">Bio / Citation</Label>
                         <Textarea className="mt-1 text-xs" rows={2} value={editNomineeBio} onChange={(e) => setEditNomineeBio(e.target.value)} />
                       </div>
@@ -3902,6 +4122,11 @@ function NomineesAdminPanel() {
                   <div className="space-y-0.5 max-w-md">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-foreground">{n.name}</span>
+                      {n.nominee_code && (
+                        <span className="px-2 py-0.5 bg-muted font-mono font-bold text-foreground rounded text-[10px] border border-border/60">
+                          Code: #{n.nominee_code}
+                        </span>
+                      )}
                       {catObj && <span className="px-2 py-0.5 bg-primary/10 text-primary rounded-md text-[10px]">{catObj.title}</span>}
                       {n.level && <span className="text-muted-foreground text-[11px]">{n.level}</span>}
                     </div>
