@@ -71,7 +71,7 @@ export default function NomineesPage() {
     return matchesCategory && matchesSearch;
   });
 
-  const ussdShortcode = ussdSettings?.shortcode || "*713*22#";
+  const ussdShortcode = ussdSettings?.shortcode || "*415*123#";
   const ussdEnabled = ussdSettings?.enabled !== false;
 
   return (
