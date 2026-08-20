@@ -3277,7 +3277,7 @@ function NomineesAdminPanel() {
     try {
       const res = await parsePDFNomineeFile(file);
       setParsedNominees(res.nominees);
-      toast.success(`Extracted ${res.nominees.length} nominee entries from PDF!`);
+      toast.success(`Extracted ${res.nominees.length} nominees across ${res.categories.length} award categories!`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to parse PDF file");
     } finally {
@@ -3322,54 +3322,119 @@ function NomineesAdminPanel() {
       if (pdfFile) {
         const cleanName = pdfFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
         const path = `${Date.now()}_${cleanName}`;
-        const { error: upErr } = await supabase.storage
-          .from("nominee-documents")
-          .upload(path, pdfFile, { upsert: false });
+        try {
+          const { error: upErr } = await supabase.storage
+            .from("nominee-documents")
+            .upload(path, pdfFile, { upsert: false });
 
-        if (upErr) throw upErr;
+          if (!upErr) {
+            const { data: pubData } = supabase.storage
+              .from("nominee-documents")
+              .getPublicUrl(path);
+            fileUrl = pubData.publicUrl;
 
-        const { data: pubData } = supabase.storage
-          .from("nominee-documents")
-          .getPublicUrl(path);
-        fileUrl = pubData.publicUrl;
-
-        await supabase.from("nominee_pdf_uploads").insert({
-          filename: pdfFile.name,
-          file_url: fileUrl,
-          title: pdfTitle || pdfFile.name,
-          parsed_count: parsedNominees.length,
-        });
+            await supabase.from("nominee_pdf_uploads").insert({
+              filename: pdfFile.name,
+              file_url: fileUrl,
+              title: pdfTitle || pdfFile.name,
+              parsed_count: parsedNominees.length,
+            });
+          }
+        } catch (storageErr) {
+          console.warn("Storage upload notice:", storageErr);
+        }
       }
 
-        const rowsToInsert = parsedNominees.map((n) => {
-          let categoryId: string | null = null;
-          if (selectedDefaultCategory && selectedDefaultCategory !== "none") {
-            categoryId = selectedDefaultCategory;
-          } else if (n.category) {
-            const match = categories.find((c) => c.title.toLowerCase() === n.category.toLowerCase() || c.id === n.category);
-            if (match) categoryId = match.id;
-          }
+      // 1. Ensure all categories from the PDF exist in award_categories
+      const uniqueCategoryNames = Array.from(
+        new Set(
+          parsedNominees
+            .map((n) => n.category?.trim())
+            .filter((c): c is string => Boolean(c && c.length > 0))
+        )
+      );
 
-          return {
-            name: n.name.trim(),
-            department: n.department ? n.department.trim() : null,
-            level: n.level ? n.level.trim() : null,
-            bio: n.bio ? n.bio.trim() : "",
-            category_id: categoryId,
-            source_pdf_url: fileUrl || null,
-            is_published: true,
-          };
-        });
+      // Fetch current categories from database
+      const { data: existingCatsData } = await supabase
+        .from("award_categories")
+        .select("id, title");
 
-      const { error: insErr } = await supabase.from("nominees").insert(rowsToInsert);
-      if (insErr) throw insErr;
+      const existingMap = new Map<string, string>();
+      (existingCatsData || []).forEach((c) => {
+        existingMap.set(c.title.toLowerCase().trim(), c.id);
+      });
 
-      toast.success(`Successfully imported ${rowsToInsert.length} nominees!`);
+      // Auto-create any missing categories
+      const missingCategories = uniqueCategoryNames.filter(
+        (name) => !existingMap.has(name.toLowerCase().trim())
+      );
+
+      let createdCategoriesCount = 0;
+      if (missingCategories.length > 0) {
+        const catRows = missingCategories.map((name, index) => ({
+          title: name,
+          description: `Nominees for ${name}`,
+          vote_price_ghs: currentVotePrice > 0 ? currentVotePrice : 1.0,
+          is_active: true,
+          display_order: existingMap.size + index,
+        }));
+
+        const { data: newCats, error: catErr } = await supabase
+          .from("award_categories")
+          .insert(catRows)
+          .select("id, title");
+
+        if (catErr) {
+          console.warn("Could not auto-create some categories:", catErr);
+        } else if (newCats) {
+          createdCategoriesCount = newCats.length;
+          newCats.forEach((c) => {
+            existingMap.set(c.title.toLowerCase().trim(), c.id);
+          });
+        }
+      }
+
+      // 2. Map nominees with resolved category IDs
+      const rowsToInsert = parsedNominees.map((n) => {
+        let categoryId: string | null = null;
+        if (selectedDefaultCategory && selectedDefaultCategory !== "none") {
+          categoryId = selectedDefaultCategory;
+        } else if (n.category) {
+          const matchId = existingMap.get(n.category.toLowerCase().trim());
+          if (matchId) categoryId = matchId;
+        }
+
+        return {
+          name: n.name.trim(),
+          department: n.department ? n.department.trim() : null,
+          level: n.level ? n.level.trim() : null,
+          bio: n.bio ? n.bio.trim() : "",
+          category_id: categoryId,
+          source_pdf_url: fileUrl || null,
+          is_published: true,
+        };
+      });
+
+      // Insert nominees in chunks of 50
+      const chunkSize = 50;
+      for (let i = 0; i < rowsToInsert.length; i += chunkSize) {
+        const chunk = rowsToInsert.slice(i, i + chunkSize);
+        const { error: insErr } = await supabase.from("nominees").insert(chunk);
+        if (insErr) throw insErr;
+      }
+
+      toast.success(
+        `Successfully imported ${rowsToInsert.length} nominees${
+          createdCategoriesCount > 0 ? ` and created ${createdCategoriesCount} new categories` : ""
+        }!`
+      );
       setParsedNominees([]);
       setPdfFile(null);
       setPdfTitle("");
+      refetchCats();
       refetchNominees();
       refetchPdfs();
+      qc.invalidateQueries({ queryKey: ["award-categories"] });
       qc.invalidateQueries({ queryKey: ["nominees"] });
       qc.invalidateQueries({ queryKey: ["nominee-pdfs"] });
     } catch (err) {
@@ -3599,7 +3664,8 @@ function NomineesAdminPanel() {
               <table className="w-full text-left text-xs">
                 <thead className="bg-muted/50 text-muted-foreground uppercase text-[10px] tracking-wider">
                   <tr>
-                    <th className="p-2.5">Name</th>
+                    <th className="p-2.5 min-w-[180px]">Category</th>
+                    <th className="p-2.5 min-w-[160px]">Name</th>
                     <th className="p-2.5">Department</th>
                     <th className="p-2.5">Level</th>
                     <th className="p-2.5">Bio / Citation</th>
@@ -3611,7 +3677,15 @@ function NomineesAdminPanel() {
                     <tr key={item.id} className="hover:bg-muted/20">
                       <td className="p-2">
                         <Input
-                          className="h-8 text-xs"
+                          className="h-8 text-xs font-semibold text-primary"
+                          value={item.category}
+                          placeholder="Category name"
+                          onChange={(e) => handleUpdateParsedItem(item.id, "category", e.target.value)}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <Input
+                          className="h-8 text-xs font-medium"
                           value={item.name}
                           onChange={(e) => handleUpdateParsedItem(item.id, "name", e.target.value)}
                         />
@@ -3625,7 +3699,7 @@ function NomineesAdminPanel() {
                       </td>
                       <td className="p-2">
                         <Input
-                          className="h-8 text-xs w-24"
+                          className="h-8 text-xs w-20"
                           value={item.level}
                           onChange={(e) => handleUpdateParsedItem(item.id, "level", e.target.value)}
                         />
