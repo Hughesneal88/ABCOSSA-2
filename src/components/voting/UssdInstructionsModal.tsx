@@ -29,7 +29,7 @@ export function UssdInstructionsModal({
   const [copied, setCopied] = useState(false);
   const { data: ussdSettings } = useUssdSettings();
 
-  const shortcode = ussdSettings?.shortcode || "*920*22#";
+  const shortcode = ussdSettings?.shortcode || "*713*22#";
   const cleanShortcode = shortcode.replace(/#$/, "");
   const fullDialString = nomineeCode ? `${cleanShortcode}*${nomineeCode}#` : shortcode;
 
@@ -58,7 +58,7 @@ export function UssdInstructionsModal({
               className="text-xs text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 gap-1"
             >
               <Smartphone className="w-3.5 h-3.5" />
-              Arkesel USSD Voting
+              Hubtel USSD Voting
             </Badge>
           </div>
           <DialogTitle className="text-xl font-bold text-foreground mt-2">

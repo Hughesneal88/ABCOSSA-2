@@ -3165,11 +3165,11 @@ function NomineesAdminPanel() {
   const [votePriceInput, setVotePriceInput] = useState<number>(1.0);
   const [votePriceInitialized, setVotePriceInitialized] = useState(false);
 
-  // USSD & Arkesel Settings
+  // USSD & Hubtel Settings
   const { data: ussdSettings } = useUssdSettings();
   const updateUssdMutation = useUpdateUssdSettings();
   const autoGenCodesMutation = useAutoGenerateNomineeCodes();
-  const [ussdShortcode, setUssdShortcode] = useState("*920*22#");
+  const [ussdShortcode, setUssdShortcode] = useState("*713*22#");
   const [ussdEventCode, setUssdEventCode] = useState("22");
   const [ussdEnabled, setUssdEnabled] = useState(true);
   const [ussdInstructions, setUssdInstructions] = useState("");
@@ -3184,7 +3184,7 @@ function NomineesAdminPanel() {
 
   useEffect(() => {
     if (ussdSettings && !ussdInitialized) {
-      setUssdShortcode(ussdSettings.shortcode || "*920*22#");
+      setUssdShortcode(ussdSettings.shortcode || "*713*22#");
       setUssdEventCode(ussdSettings.eventCode || "22");
       setUssdEnabled(ussdSettings.enabled);
       setUssdInstructions(ussdSettings.instructions || "");
@@ -3268,7 +3268,7 @@ function NomineesAdminPanel() {
     e.preventDefault();
     updateUssdMutation.mutate(
       {
-        provider: "arkesel",
+        provider: "hubtel",
         shortcode: ussdShortcode.trim(),
         eventCode: ussdEventCode.trim(),
         enabled: ussdEnabled,
@@ -3276,7 +3276,7 @@ function NomineesAdminPanel() {
       },
       {
         onSuccess: () => {
-          toast.success("Arkesel USSD voting settings saved successfully!");
+          toast.success("Hubtel USSD voting settings saved successfully!");
         },
         onError: (err) => {
           toast.error(err instanceof Error ? err.message : "Failed to save USSD settings");
@@ -3670,13 +3670,13 @@ function NomineesAdminPanel() {
         </form>
       </section>
 
-      {/* 0b. Arkesel USSD Voting Configuration Card */}
+      {/* 0b. Hubtel USSD Voting Configuration Card */}
       <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Smartphone className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             <div>
-              <h3 className="text-lg font-bold text-foreground">USSD Voting Configuration (Arkesel *920#)</h3>
+              <h3 className="text-lg font-bold text-foreground">USSD Voting Configuration (Hubtel *713#)</h3>
               <p className="text-xs text-muted-foreground">
                 Configure telecom shortcodes for USSD dial voting across MTN MoMo, Telecel Cash, and AT Money.
               </p>
@@ -3707,7 +3707,7 @@ function NomineesAdminPanel() {
               <Label className="text-xs font-semibold">USSD Shortcode</Label>
               <Input
                 className="mt-1 font-mono font-bold text-sm"
-                placeholder="e.g. *920*22#"
+                placeholder="e.g. *713*22#"
                 value={ussdShortcode}
                 onChange={(e) => setUssdShortcode(e.target.value)}
                 required
@@ -3726,7 +3726,7 @@ function NomineesAdminPanel() {
                 onChange={(e) => setUssdEventCode(e.target.value)}
               />
               <span className="text-[10px] text-muted-foreground mt-0.5 block">
-                Your Arkesel assigned event code.
+                Your Hubtel assigned event or POS code.
               </span>
             </div>
 
@@ -3754,15 +3754,15 @@ function NomineesAdminPanel() {
               rows={3}
               value={ussdInstructions}
               onChange={(e) => setUssdInstructions(e.target.value)}
-              placeholder="Step 1. Dial *920*22# on any network..."
+              placeholder="Step 1. Dial *713*22# on any network..."
             />
           </div>
 
-          {/* Arkesel Webhook URL Box */}
+          {/* Hubtel Webhook / USSD URL Box */}
           <div className="p-3.5 rounded-xl bg-muted/40 border border-border/60 space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                <PhoneCall className="w-3.5 h-3.5 text-emerald-500" /> Arkesel Webhook URL (Paste in Arkesel Dashboard)
+                <PhoneCall className="w-3.5 h-3.5 text-emerald-500" /> Hubtel USSD / Webhook URL (Paste in Hubtel Portal)
               </span>
               <Button
                 type="button"
@@ -3770,19 +3770,19 @@ function NomineesAdminPanel() {
                 size="sm"
                 className="h-6 text-[11px] font-semibold gap-1 text-primary"
                 onClick={() => {
-                  const url = `${window.location.origin}/functions/v1/arkesel-ussd-webhook`;
+                  const url = `${window.location.origin}/functions/v1/hubtel-ussd-webhook`;
                   navigator.clipboard.writeText(url);
-                  toast.success("Copied Arkesel webhook URL!");
+                  toast.success("Copied Hubtel USSD webhook URL!");
                 }}
               >
                 <Copy className="w-3 h-3" /> Copy URL
               </Button>
             </div>
             <code className="text-[11px] font-mono text-muted-foreground block select-all bg-background p-2 rounded border border-border/40">
-              {window.location.origin}/functions/v1/arkesel-ussd-webhook
+              {window.location.origin}/functions/v1/hubtel-ussd-webhook
             </code>
             <p className="text-[10px] text-muted-foreground">
-              When a vote is cast via Arkesel USSD, Arkesel notifies this endpoint to credit candidate votes automatically.
+              Handles both Hubtel Programmable USSD interactive menus and incoming payment notifications.
             </p>
           </div>
 

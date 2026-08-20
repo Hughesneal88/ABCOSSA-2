@@ -142,8 +142,8 @@ export function useUssdSettings() {
     queryFn: async (): Promise<UssdSettings> => {
       if (!supabase) {
         return {
-          provider: "arkesel",
-          shortcode: "*920*22#",
+          provider: "hubtel",
+          shortcode: "*713*22#",
           eventCode: "22",
           enabled: true,
           instructions:
@@ -169,8 +169,8 @@ export function useUssdSettings() {
       );
 
       return {
-        provider: map["ussd_provider"] || "arkesel",
-        shortcode: map["ussd_shortcode"] || "*920*22#",
+        provider: map["ussd_provider"] || "hubtel",
+        shortcode: map["ussd_shortcode"] || "*713*22#",
         eventCode: map["ussd_event_code"] || "22",
         enabled: map["ussd_enabled"] !== "false",
         instructions:
