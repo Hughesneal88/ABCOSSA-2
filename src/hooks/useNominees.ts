@@ -145,7 +145,7 @@ export function useUssdSettings() {
           provider: "paystack",
           shortcode: "*415*123#",
           eventCode: "123",
-          enabled: true,
+          enabled: false,
           instructions:
             "1. Dial the USSD code on any network (MTN, Telecel, AT)\n2. Enter Candidate Code\n3. Enter Number of Votes\n4. Authorize Mobile Money PIN prompt",
         };
@@ -172,7 +172,7 @@ export function useUssdSettings() {
         provider: map["ussd_provider"] || "paystack",
         shortcode: map["ussd_shortcode"] || "*415*123#",
         eventCode: map["ussd_event_code"] || "123",
-        enabled: map["ussd_enabled"] !== "false",
+        enabled: map["ussd_enabled"] === "true",
         instructions:
           map["ussd_instructions"] ||
           "1. Dial the USSD code on any network (MTN, Telecel, AT)\n2. Enter Candidate Code\n3. Enter Number of Votes\n4. Authorize Mobile Money PIN prompt",

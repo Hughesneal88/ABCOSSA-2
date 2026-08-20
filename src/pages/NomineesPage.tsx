@@ -72,7 +72,7 @@ export default function NomineesPage() {
   });
 
   const ussdShortcode = ussdSettings?.shortcode || "*415*123#";
-  const ussdEnabled = ussdSettings?.enabled !== false;
+  const ussdEnabled = Boolean(ussdSettings?.enabled);
 
   return (
     <div className="min-h-screen pt-28 pb-20 bg-gradient-to-b from-background via-background/95 to-muted/30">
@@ -87,7 +87,7 @@ export default function NomineesPage() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Discover outstanding students, researchers, and student leaders nominated for ABCOSSA awards.
-            Cast your votes online or via USSD shortcode, and download official PDF lists.
+            Cast your votes online{ussdEnabled ? " or via USSD shortcode" : ""}, and download official PDF lists.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -256,7 +256,7 @@ export default function NomineesPage() {
                             <Badge variant="secondary" className="text-xs">General Nominee</Badge>
                           )}
                           <div className="flex items-center gap-1">
-                            {nominee.nominee_code && (
+                            {nominee.nominee_code && ussdEnabled && (
                               <Badge variant="outline" className="text-[11px] font-mono font-bold bg-muted border-border/60 text-foreground">
                                 Code: {nominee.nominee_code}
                               </Badge>
@@ -300,7 +300,7 @@ export default function NomineesPage() {
                         )}
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className={ussdEnabled ? "grid grid-cols-2 gap-2" : "flex flex-col"}>
                         {/* Option 1: Online Vote */}
                         {votePrice === 0 ? (
                           <Button
@@ -333,7 +333,7 @@ export default function NomineesPage() {
                         )}
 
                         {/* Option 2: USSD Vote */}
-                        {ussdEnabled ? (
+                        {ussdEnabled && (
                           <UssdInstructionsModal
                             nomineeName={nominee.name}
                             nomineeCode={nominee.nominee_code}
@@ -349,8 +349,6 @@ export default function NomineesPage() {
                               </Button>
                             }
                           />
-                        ) : (
-                          <div />
                         )}
                       </div>
                     </div>

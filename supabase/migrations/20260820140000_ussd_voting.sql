@@ -1,4 +1,4 @@
--- ABCOSSA: USSD Voting Integration (Hubtel *713#)
+-- ABCOSSA: USSD Voting Integration (Paystack / Hubtel / Arkesel)
 
 -- 1. Add nominee_code column to nominees table if not exists
 do $$
@@ -12,16 +12,16 @@ begin
   end if;
 end $$;
 
--- 2. Seed default Hubtel USSD settings in site_settings
+-- 2. Seed default USSD settings in site_settings (disabled by default)
 insert into public.site_settings (key, value) values
-  ('ussd_provider', 'hubtel'),
-  ('ussd_shortcode', '*713*22#'),
-  ('ussd_event_code', '22'),
-  ('ussd_enabled', 'true'),
+  ('ussd_provider', 'paystack'),
+  ('ussd_shortcode', '*415*123#'),
+  ('ussd_event_code', '123'),
+  ('ussd_enabled', 'false'),
   ('ussd_instructions', '1. Dial the USSD code on any network (MTN, Telecel, AT)\n2. Enter Candidate Code\n3. Enter Number of Votes\n4. Authorize Mobile Money PIN prompt')
 on conflict (key) do update set
   value = excluded.value
-where site_settings.key in ('ussd_provider', 'ussd_shortcode');
+where site_settings.key in ('ussd_enabled');
 
 -- 3. Backfill sequential nominee codes (101, 102...) for existing nominees with null code
 with numbered_nominees as (

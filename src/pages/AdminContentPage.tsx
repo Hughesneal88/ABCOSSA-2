@@ -3172,7 +3172,7 @@ function NomineesAdminPanel() {
   const [ussdProvider, setUssdProvider] = useState("paystack");
   const [ussdShortcode, setUssdShortcode] = useState("*415*123#");
   const [ussdEventCode, setUssdEventCode] = useState("123");
-  const [ussdEnabled, setUssdEnabled] = useState(true);
+  const [ussdEnabled, setUssdEnabled] = useState(false);
   const [ussdInstructions, setUssdInstructions] = useState("");
   const [ussdInitialized, setUssdInitialized] = useState(false);
 
