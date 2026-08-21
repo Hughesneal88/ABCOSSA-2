@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -26,6 +26,14 @@ import {
   PhoneCall,
   Copy,
   Hash,
+  Search,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
+  SlidersHorizontal,
+  Heart,
+  Trophy,
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
 import {
@@ -3254,6 +3262,147 @@ function NomineesAdminPanel() {
     enabled: isSupabaseConfigured,
   });
 
+  // Filter, Search, Sort & Pagination State for Published Nominees
+  const [nomineeSearch, setNomineeSearch] = useState("");
+  const [nomineeCategoryFilter, setNomineeCategoryFilter] = useState("all");
+  const [nomineeStatusFilter, setNomineeStatusFilter] = useState("all");
+  const [nomineeSortBy, setNomineeSortBy] = useState<string>("votes_desc");
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Category counts map for easy badge display in dropdown
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    nominees.forEach((n) => {
+      const key = n.category_id || "none";
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, [nominees]);
+
+  // Filtered and sorted nominees
+  const filteredAndSortedNominees = useMemo(() => {
+    let list = [...nominees];
+
+    // 1. Search filter
+    if (nomineeSearch.trim()) {
+      const q = nomineeSearch.toLowerCase().trim();
+      list = list.filter((n) => {
+        const cat = categories.find((c) => c.id === n.category_id);
+        return (
+          n.name.toLowerCase().includes(q) ||
+          (n.nominee_code && n.nominee_code.toLowerCase().includes(q)) ||
+          (n.department && n.department.toLowerCase().includes(q)) ||
+          (n.level && n.level.toLowerCase().includes(q)) ||
+          (n.bio && n.bio.toLowerCase().includes(q)) ||
+          (cat && cat.title.toLowerCase().includes(q))
+        );
+      });
+    }
+
+    // 2. Category filter
+    if (nomineeCategoryFilter !== "all") {
+      if (nomineeCategoryFilter === "none") {
+        list = list.filter((n) => !n.category_id);
+      } else {
+        list = list.filter((n) => n.category_id === nomineeCategoryFilter);
+      }
+    }
+
+    // 3. Status filter
+    if (nomineeStatusFilter === "published") {
+      list = list.filter((n) => n.is_published);
+    } else if (nomineeStatusFilter === "unpublished") {
+      list = list.filter((n) => !n.is_published);
+    }
+
+    // 4. Sorting
+    list.sort((a, b) => {
+      if (nomineeSortBy === "votes_desc") {
+        return (b.votes_count || 0) - (a.votes_count || 0);
+      }
+      if (nomineeSortBy === "votes_asc") {
+        return (a.votes_count || 0) - (b.votes_count || 0);
+      }
+      if (nomineeSortBy === "name_asc") {
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      }
+      if (nomineeSortBy === "name_desc") {
+        return b.name.localeCompare(a.name, undefined, { sensitivity: "base" });
+      }
+      if (nomineeSortBy === "category_asc") {
+        const catA = categories.find((c) => c.id === a.category_id)?.title || "Uncategorized";
+        const catB = categories.find((c) => c.id === b.category_id)?.title || "Uncategorized";
+        const cmp = catA.localeCompare(catB, undefined, { sensitivity: "base" });
+        if (cmp !== 0) return cmp;
+        return a.name.localeCompare(b.name);
+      }
+      if (nomineeSortBy === "category_desc") {
+        const catA = categories.find((c) => c.id === a.category_id)?.title || "Uncategorized";
+        const catB = categories.find((c) => c.id === b.category_id)?.title || "Uncategorized";
+        const cmp = catB.localeCompare(catA, undefined, { sensitivity: "base" });
+        if (cmp !== 0) return cmp;
+        return a.name.localeCompare(b.name);
+      }
+      if (nomineeSortBy === "code_asc") {
+        const codeA = parseInt(a.nominee_code || "999999", 10);
+        const codeB = parseInt(b.nominee_code || "999999", 10);
+        if (!isNaN(codeA) && !isNaN(codeB)) return codeA - codeB;
+        return (a.nominee_code || "").localeCompare(b.nominee_code || "");
+      }
+      if (nomineeSortBy === "code_desc") {
+        const codeA = parseInt(a.nominee_code || "0", 10);
+        const codeB = parseInt(b.nominee_code || "0", 10);
+        if (!isNaN(codeA) && !isNaN(codeB)) return codeB - codeA;
+        return (b.nominee_code || "").localeCompare(a.nominee_code || "");
+      }
+      if (nomineeSortBy === "created_asc") {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      }
+      // default: created_desc
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
+    return list;
+  }, [nominees, categories, nomineeSearch, nomineeCategoryFilter, nomineeStatusFilter, nomineeSortBy]);
+
+  // Reset to page 1 whenever filters or sorting change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [nomineeSearch, nomineeCategoryFilter, nomineeStatusFilter, nomineeSortBy, pageSize]);
+
+  const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(filteredAndSortedNominees.length / pageSize));
+  const paginatedNominees = useMemo(() => {
+    if (pageSize === 0) return filteredAndSortedNominees;
+    const start = (currentPage - 1) * pageSize;
+    return filteredAndSortedNominees.slice(start, start + pageSize);
+  }, [filteredAndSortedNominees, currentPage, pageSize]);
+
+  const totalVotesAcrossAll = useMemo(() => {
+    return nominees.reduce((sum, n) => sum + (n.votes_count || 0), 0);
+  }, [nominees]);
+
+  const topNominee = useMemo(() => {
+    if (nominees.length === 0) return null;
+    return [...nominees].sort((a, b) => (b.votes_count || 0) - (a.votes_count || 0))[0];
+  }, [nominees]);
+
+  const isFiltered = Boolean(
+    nomineeSearch.trim() ||
+    nomineeCategoryFilter !== "all" ||
+    nomineeStatusFilter !== "all" ||
+    nomineeSortBy !== "votes_desc"
+  );
+
+  const handleResetNomineeFilters = () => {
+    setNomineeSearch("");
+    setNomineeCategoryFilter("all");
+    setNomineeStatusFilter("all");
+    setNomineeSortBy("votes_desc");
+    setPageSize(25);
+    setCurrentPage(1);
+  };
+
   const handleSaveVotePrice = (e: React.FormEvent) => {
     e.preventDefault();
     updateVotePriceMutation.mutate(Number(votePriceInput), {
@@ -4097,19 +4246,176 @@ function NomineesAdminPanel() {
         </section>
       </div>
 
-      {/* 4. Nominees List Table & Editor */}
-      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold text-foreground">Published Nominees ({nominees.length})</h3>
+      {/* 4. Nominees List Table & Editor with Sorting & Filtering */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-5">
+        {/* Header & Metrics */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
+              <Award className="w-5 h-5 text-primary" />
+              Nominees Management ({nominees.length})
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Filter, search, and sort all award nominees across categories, vote standings, names, and candidate codes.
+            </p>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className="px-3 py-1 bg-muted/60 border border-border/60 rounded-full font-medium text-foreground">
+              Total: <strong className="font-bold">{nominees.length}</strong>
+            </span>
+            <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full font-medium text-emerald-600 dark:text-emerald-400">
+              Total Votes: <strong className="font-bold">{totalVotesAcrossAll.toLocaleString()}</strong>
+            </span>
+            {topNominee && topNominee.votes_count > 0 && (
+              <span className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                Leader: <strong>{topNominee.name}</strong> ({topNominee.votes_count})
+              </span>
+            )}
+          </div>
         </div>
 
+        {/* Filter, Search & Sort Toolbar */}
+        <div className="p-4 rounded-xl bg-muted/30 border border-border/60 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
+            {/* Search Input */}
+            <div className="lg:col-span-4 relative">
+              <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                placeholder="Search name, code, dept, bio..."
+                value={nomineeSearch}
+                onChange={(e) => setNomineeSearch(e.target.value)}
+                className="pl-9 pr-8 text-xs h-9"
+              />
+              {nomineeSearch && (
+                <button
+                  type="button"
+                  onClick={() => setNomineeSearch("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                >
+                  <XIcon className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Category Filter */}
+            <div className="lg:col-span-3">
+              <Select value={nomineeCategoryFilter} onValueChange={setNomineeCategoryFilter}>
+                <SelectTrigger className="text-xs h-9">
+                  <SelectValue placeholder="Filter Category" />
+                </SelectTrigger>
+                <SelectContent className="max-h-64">
+                  <SelectItem value="all">All Categories ({nominees.length})</SelectItem>
+                  <SelectItem value="none">Uncategorized ({categoryCounts["none"] || 0})</SelectItem>
+                  {categories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.title} ({categoryCounts[c.id] || 0})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Sort Dropdown */}
+            <div className="lg:col-span-3">
+              <Select value={nomineeSortBy} onValueChange={setNomineeSortBy}>
+                <SelectTrigger className="text-xs h-9 font-medium">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                    <SelectValue placeholder="Sort By" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="votes_desc">🏆 Votes: Highest First</SelectItem>
+                  <SelectItem value="votes_asc">📉 Votes: Lowest First</SelectItem>
+                  <SelectItem value="name_asc">🔤 Name: A to Z</SelectItem>
+                  <SelectItem value="name_desc">🔤 Name: Z to A</SelectItem>
+                  <SelectItem value="category_asc">🎖️ Category: A to Z</SelectItem>
+                  <SelectItem value="category_desc">🎖️ Category: Z to A</SelectItem>
+                  <SelectItem value="code_asc">🔢 USSD Code: 101, 102...</SelectItem>
+                  <SelectItem value="code_desc">🔢 USSD Code: Highest First</SelectItem>
+                  <SelectItem value="created_desc">🕒 Date Added: Newest First</SelectItem>
+                  <SelectItem value="created_asc">🕒 Date Added: Oldest First</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Status Filter & Page Size */}
+            <div className="lg:col-span-2 flex items-center gap-2">
+              <Select value={nomineeStatusFilter} onValueChange={setNomineeStatusFilter}>
+                <SelectTrigger className="text-xs h-9 flex-1">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="published">Published</SelectItem>
+                  <SelectItem value="unpublished">Draft / Unpublished</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {isFiltered && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  title="Reset Filters"
+                  onClick={handleResetNomineeFilters}
+                  className="h-9 w-9 text-muted-foreground hover:text-destructive flex-shrink-0"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Results Counter & Page Size Picker */}
+          <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-border/40 text-xs text-muted-foreground">
+            <div>
+              Showing <strong className="text-foreground">{filteredAndSortedNominees.length}</strong> of{" "}
+              <strong className="text-foreground">{nominees.length}</strong> nominees
+              {isFiltered && <span className="text-primary font-semibold ml-1">(Filtered)</span>}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px]">Show:</span>
+              <div className="flex items-center gap-1">
+                {[25, 50, 100, 0].map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => setPageSize(size)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
+                      pageSize === size
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {size === 0 ? "All" : size}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Nominees List */}
         {nominees.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No nominees added yet.</p>
+          <p className="text-xs text-muted-foreground py-8 text-center">No nominees added yet.</p>
+        ) : filteredAndSortedNominees.length === 0 ? (
+          <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/60 rounded-xl space-y-2">
+            <p>No nominees match your current search or filter criteria.</p>
+            <Button type="button" variant="outline" size="sm" onClick={handleResetNomineeFilters} className="text-xs">
+              Clear Filters
+            </Button>
+          </div>
         ) : (
-          <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden">
-            {nominees.map((n) => {
+          <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden shadow-sm">
+            {paginatedNominees.map((n, idx) => {
               const catObj = categories.find((c) => c.id === n.category_id);
               const isEditing = editingNomineeId === n.id;
+              const globalIndex = (currentPage - 1) * (pageSize || filteredAndSortedNominees.length) + idx + 1;
 
               if (isEditing) {
                 return (
@@ -4164,29 +4470,73 @@ function NomineesAdminPanel() {
               }
 
               return (
-                <div key={n.id} className="p-3 bg-background flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="space-y-0.5 max-w-md">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-foreground">{n.name}</span>
-                      {n.nominee_code && (
-                        <span className="px-2 py-0.5 bg-muted font-mono font-bold text-foreground rounded text-[10px] border border-border/60">
-                          Code: #{n.nominee_code}
-                        </span>
-                      )}
-                      {catObj && <span className="px-2 py-0.5 bg-primary/10 text-primary rounded-md text-[10px]">{catObj.title}</span>}
-                      {n.level && <span className="text-muted-foreground text-[11px]">{n.level}</span>}
+                <div
+                  key={n.id}
+                  className={`p-3.5 bg-background flex flex-wrap items-center justify-between gap-3 text-xs transition-colors hover:bg-muted/20 ${
+                    !n.is_published ? "opacity-60 bg-muted/10" : ""
+                  }`}
+                >
+                  <div className="flex items-start gap-3 max-w-xl">
+                    {/* Rank / Index Badge */}
+                    <div
+                      className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-0.5 ${
+                        nomineeSortBy === "votes_desc" && globalIndex === 1
+                          ? "bg-amber-500 text-white shadow-sm"
+                          : nomineeSortBy === "votes_desc" && globalIndex === 2
+                          ? "bg-slate-400 text-white"
+                          : nomineeSortBy === "votes_desc" && globalIndex === 3
+                          ? "bg-amber-700 text-white"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {globalIndex}
                     </div>
-                    {n.department && <p className="text-emerald-600 dark:text-emerald-400 text-[11px] font-medium">{n.department}</p>}
-                    {n.bio && <p className="text-muted-foreground text-[11px] line-clamp-1">{n.bio}</p>}
+
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-foreground text-sm">{n.name}</span>
+                        {n.nominee_code && (
+                          <span className="px-2 py-0.5 bg-muted font-mono font-bold text-foreground rounded text-[10px] border border-border/60">
+                            Code: #{n.nominee_code}
+                          </span>
+                        )}
+                        {catObj ? (
+                          <span className="px-2 py-0.5 bg-primary/10 text-primary font-medium rounded-md text-[10px]">
+                            {catObj.title}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 bg-muted text-muted-foreground rounded-md text-[10px]">
+                            Uncategorized
+                          </span>
+                        )}
+                        {n.level && <span className="text-muted-foreground text-[11px]">({n.level})</span>}
+                        {!n.is_published && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                            Draft
+                          </span>
+                        )}
+                      </div>
+                      {n.department && <p className="text-emerald-600 dark:text-emerald-400 text-[11px] font-medium">{n.department}</p>}
+                      {n.bio && <p className="text-muted-foreground text-[11px] line-clamp-2 leading-relaxed">{n.bio}</p>}
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-semibold text-rose-500">{n.votes_count} votes</span>
+                  <div className="flex items-center gap-3 ml-auto">
+                    {/* Votes Count Badge */}
+                    <div className="text-right pr-2">
+                      <span className="text-sm font-bold text-rose-500 block leading-tight">
+                        {n.votes_count || 0}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground uppercase font-medium tracking-wider">
+                        {n.votes_count === 1 ? "Vote" : "Votes"}
+                      </span>
+                    </div>
+
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-7 text-xs"
+                      className="h-7 text-xs font-semibold"
                       onClick={() => startEditNominee(n)}
                     >
                       Edit
@@ -4204,7 +4554,7 @@ function NomineesAdminPanel() {
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-destructive"
+                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
                       onClick={() => handleDeleteNominee(n.id)}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -4213,6 +4563,66 @@ function NomineesAdminPanel() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Pagination Bar */}
+        {pageSize > 0 && totalPages > 1 && (
+          <div className="flex items-center justify-between flex-wrap gap-3 pt-2">
+            <span className="text-xs text-muted-foreground">
+              Page <strong className="text-foreground">{currentPage}</strong> of{" "}
+              <strong className="text-foreground">{totalPages}</strong> (
+              {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredAndSortedNominees.length)} of {filteredAndSortedNominees.length})
+            </span>
+
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                className="h-8 px-2.5 text-xs font-semibold gap-1"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Previous
+              </Button>
+
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let p = i + 1;
+                if (totalPages > 5) {
+                  if (currentPage <= 3) {
+                    p = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    p = totalPages - 4 + i;
+                  } else {
+                    p = currentPage - 2 + i;
+                  }
+                }
+                return (
+                  <Button
+                    key={p}
+                    type="button"
+                    variant={currentPage === p ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setCurrentPage(p)}
+                    className="h-8 w-8 text-xs font-semibold p-0"
+                  >
+                    {p}
+                  </Button>
+                );
+              })}
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                className="h-8 px-2.5 text-xs font-semibold gap-1"
+              >
+                Next <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           </div>
         )}
       </section>
