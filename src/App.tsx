@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { Loader2 } from "lucide-react";
 import { isAdminSubdomain } from "@/lib/domainRouting";
+import { ThemeProvider } from "@/hooks/useTheme";
 
 // Route-based code splitting for fast initial page load
 const HomePage = lazy(() => import("./pages/HomePage"));
@@ -40,12 +41,13 @@ const App = () => {
   const isSubdomainAdmin = isAdminSubdomain();
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Suspense fallback={<PageSkeleton />}>
+    <ThemeProvider defaultTheme="light" storageKey="abcossa-theme">
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Suspense fallback={<PageSkeleton />}>
             <Routes>
               {isSubdomainAdmin ? (
                 // When accessed via admin.abcossa.org or portal.abcossa.org
@@ -76,9 +78,10 @@ const App = () => {
               )}
             </Routes>
           </Suspense>
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
+          </BrowserRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 };
 

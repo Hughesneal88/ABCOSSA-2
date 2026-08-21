@@ -1,19 +1,15 @@
 import { useState, useMemo } from "react";
 import {
   Award,
-  Download,
-  FileText,
   Heart,
   Search,
   Sparkles,
   PhoneCall,
   Smartphone,
-  Hash,
   ArrowUpDown,
   Trophy,
   X as XIcon,
   RotateCcw,
-  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,11 +26,9 @@ import { toast } from "sonner";
 import {
   useAwardCategories,
   useNominees,
-  useNomineePdfs,
   useVoteNominee,
   useVotePrice,
   useUssdSettings,
-  type NomineeRow,
 } from "@/hooks/useNominees";
 import { formatGHS } from "@/lib/paystackClient";
 import { PaystackCheckoutModal } from "@/components/payment/PaystackCheckoutModal";
@@ -47,7 +41,6 @@ export default function NomineesPage() {
 
   const { data: categories = [], isLoading: loadingCategories } = useAwardCategories();
   const { data: nominees = [], isLoading: loadingNominees } = useNominees();
-  const { data: pdfDocs = [] } = useNomineePdfs();
   const { data: votePrice = 1.0 } = useVotePrice();
   const { data: ussdSettings } = useUssdSettings();
 
@@ -191,7 +184,7 @@ export default function NomineesPage() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Discover outstanding students, researchers, and student leaders nominated for ABCOSSA awards.
-            Cast your votes online{ussdEnabled ? " or via USSD shortcode" : ""}, and download official PDF lists.
+            Cast your votes online{ussdEnabled ? " or via USSD shortcode" : ""}.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -245,53 +238,6 @@ export default function NomineesPage() {
           </div>
         )}
 
-        {/* PDF Documents Section */}
-        {pdfDocs.length > 0 && (
-          <div className="max-w-6xl mx-auto mb-12">
-            <Card className="border-border/60 shadow-sm bg-card/60 backdrop-blur-sm overflow-hidden">
-              <CardHeader className="bg-muted/40 border-b border-border/40 pb-4">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-primary" />
-                    <CardTitle className="text-xl font-bold">Official PDF Nominee Lists</CardTitle>
-                  </div>
-                  <Badge variant="secondary">{pdfDocs.length} Document{pdfDocs.length > 1 ? "s" : ""}</Badge>
-                </div>
-                <CardDescription>
-                  Download complete, verified PDF documents of nominees released by the ABCOSSA Executive Board.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {pdfDocs.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="flex items-start justify-between p-4 rounded-xl border border-border/60 bg-background/80 hover:bg-muted/40 transition-all hover:shadow-md"
-                    >
-                      <div className="space-y-1.5 max-w-[75%]">
-                        <h4 className="font-semibold text-foreground text-sm line-clamp-1">{doc.title}</h4>
-                        <p className="text-xs text-muted-foreground line-clamp-1">{doc.filename}</p>
-                        <div className="flex items-center gap-2 text-[11px] text-muted-foreground pt-1">
-                          <span>{new Date(doc.created_at).toLocaleDateString()}</span>
-                          {doc.parsed_count > 0 && <span>• {doc.parsed_count} candidates</span>}
-                        </div>
-                      </div>
-                      <a
-                        href={doc.file_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline bg-primary/10 hover:bg-primary/20 px-3 py-2 rounded-lg transition-colors"
-                      >
-                        <Download className="w-3.5 h-3.5" /> PDF
-                      </a>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
         {/* Minimalist Filter, Sort & Search Toolbar */}
         <div className="max-w-6xl mx-auto space-y-3 mb-8">
           <div className="p-2 sm:p-2.5 rounded-2xl bg-card border border-border/60 shadow-sm flex flex-col md:flex-row items-center gap-2.5">
@@ -340,7 +286,7 @@ export default function NomineesPage() {
               </Select>
             </div>
 
-            {/* 3. Minimalist Compact Sort Dropdown */}
+            {/* 3. Minimalist Compact Sort Dropdown (No Emojis) */}
             <div className="w-full md:w-48 flex-shrink-0 flex items-center gap-2">
               <Select value={sortBy} onValueChange={setSortBy}>
                 <SelectTrigger className="text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl font-medium flex-1">
@@ -350,13 +296,13 @@ export default function NomineesPage() {
                   </div>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="votes_desc">🏆 Votes: High to Low</SelectItem>
-                  <SelectItem value="votes_asc">📉 Votes: Low to High</SelectItem>
-                  <SelectItem value="name_asc">🔤 Name: A to Z</SelectItem>
-                  <SelectItem value="name_desc">🔤 Name: Z to A</SelectItem>
-                  <SelectItem value="category_asc">🎖️ Category: A to Z</SelectItem>
-                  <SelectItem value="code_asc">🔢 USSD Code (101...)</SelectItem>
-                  <SelectItem value="created_desc">🕒 Recently Added</SelectItem>
+                  <SelectItem value="votes_desc">Votes: High to Low</SelectItem>
+                  <SelectItem value="votes_asc">Votes: Low to High</SelectItem>
+                  <SelectItem value="name_asc">Name: A to Z</SelectItem>
+                  <SelectItem value="name_desc">Name: Z to A</SelectItem>
+                  <SelectItem value="category_asc">Category: A to Z</SelectItem>
+                  <SelectItem value="code_asc">USSD Code (101...)</SelectItem>
+                  <SelectItem value="created_desc">Recently Added</SelectItem>
                 </SelectContent>
               </Select>
 

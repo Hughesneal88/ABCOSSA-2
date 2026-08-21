@@ -4,6 +4,7 @@ import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSiteImages } from "@/hooks/useSupabasePublic";
 import abcossaLogo from "@/assets/WhatsApp Image 2026-05-05 at 5.23.56 PM.jpeg";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 type NavItem =
   | { name: string; href: string }
@@ -95,16 +96,21 @@ export function Navbar() {
             >
               Staff portal
             </Link>
+
+            <ThemeToggle className="ml-1 text-muted-foreground hover:text-foreground" />
           </div>
 
-          <button
-            className="lg:hidden p-2 text-foreground"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            type="button"
-            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
-          >
-            {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
-          </button>
+          <div className="flex items-center gap-2 lg:hidden">
+            <ThemeToggle className="text-muted-foreground hover:text-foreground" />
+            <button
+              className="p-2 text-foreground"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              type="button"
+              aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+            >
+              {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+            </button>
+          </div>
         </div>
 
         {mobileMenuOpen && (

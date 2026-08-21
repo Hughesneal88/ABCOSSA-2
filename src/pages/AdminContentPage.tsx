@@ -64,6 +64,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { slugifyTitle, uniqueSlug } from "@/lib/slugify";
 import type { Session, User } from "@supabase/supabase-js";
 
@@ -462,6 +463,7 @@ export default function AdminContentPage() {
             <span className="hidden sm:inline-flex items-center gap-1 text-[11px] text-muted-foreground bg-muted px-2.5 py-1 rounded-full border border-border/60 font-medium">
               <Clock className="w-3 h-3 text-amber-500" /> Auto-logout: 15m inactivity
             </span>
+            <ThemeToggle className="text-muted-foreground hover:text-foreground" />
             <Button variant="outline" size="sm" asChild>
               <a href={getMainSiteUrl()} target="_blank" rel="noreferrer">
                 View site <ExternalLink className="w-3.5 h-3.5 ml-1" />
@@ -4328,16 +4330,16 @@ function NomineesAdminPanel() {
                   </div>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="votes_desc">🏆 Votes: Highest First</SelectItem>
-                  <SelectItem value="votes_asc">📉 Votes: Lowest First</SelectItem>
-                  <SelectItem value="name_asc">🔤 Name: A to Z</SelectItem>
-                  <SelectItem value="name_desc">🔤 Name: Z to A</SelectItem>
-                  <SelectItem value="category_asc">🎖️ Category: A to Z</SelectItem>
-                  <SelectItem value="category_desc">🎖️ Category: Z to A</SelectItem>
-                  <SelectItem value="code_asc">🔢 USSD Code: 101, 102...</SelectItem>
-                  <SelectItem value="code_desc">🔢 USSD Code: Highest First</SelectItem>
-                  <SelectItem value="created_desc">🕒 Date Added: Newest First</SelectItem>
-                  <SelectItem value="created_asc">🕒 Date Added: Oldest First</SelectItem>
+                  <SelectItem value="votes_desc">Votes: Highest First</SelectItem>
+                  <SelectItem value="votes_asc">Votes: Lowest First</SelectItem>
+                  <SelectItem value="name_asc">Name: A to Z</SelectItem>
+                  <SelectItem value="name_desc">Name: Z to A</SelectItem>
+                  <SelectItem value="category_asc">Category: A to Z</SelectItem>
+                  <SelectItem value="category_desc">Category: Z to A</SelectItem>
+                  <SelectItem value="code_asc">USSD Code: Lowest First</SelectItem>
+                  <SelectItem value="code_desc">USSD Code: Highest First</SelectItem>
+                  <SelectItem value="created_desc">Date Added: Newest First</SelectItem>
+                  <SelectItem value="created_asc">Date Added: Oldest First</SelectItem>
                 </SelectContent>
               </Select>
             </div>
