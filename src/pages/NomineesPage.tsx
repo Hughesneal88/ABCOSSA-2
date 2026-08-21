@@ -1,10 +1,31 @@
-import { useState } from "react";
-import { Award, Download, FileText, Heart, Search, Sparkles, PhoneCall, Smartphone, Hash } from "lucide-react";
+import { useState, useMemo } from "react";
+import {
+  Award,
+  Download,
+  FileText,
+  Heart,
+  Search,
+  Sparkles,
+  PhoneCall,
+  Smartphone,
+  Hash,
+  ArrowUpDown,
+  Trophy,
+  X as XIcon,
+  RotateCcw,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   useAwardCategories,
@@ -22,6 +43,7 @@ import { UssdInstructionsModal } from "@/components/voting/UssdInstructionsModal
 export default function NomineesPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [sortBy, setSortBy] = useState<string>("votes_desc");
 
   const { data: categories = [], isLoading: loadingCategories } = useAwardCategories();
   const { data: nominees = [], isLoading: loadingNominees } = useNominees();
@@ -59,20 +81,102 @@ export default function NomineesPage() {
     );
   };
 
-  const filteredNominees = nominees.filter((n) => {
-    const matchesCategory = selectedCategory === "all" || n.category_id === selectedCategory;
-    const query = searchQuery.toLowerCase().trim();
-    const matchesSearch =
-      !query ||
-      n.name.toLowerCase().includes(query) ||
-      (n.nominee_code && n.nominee_code.toLowerCase().includes(query)) ||
-      (n.department && n.department.toLowerCase().includes(query)) ||
-      (n.bio && n.bio.toLowerCase().includes(query));
-    return matchesCategory && matchesSearch;
-  });
+  // Category counts map
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    nominees.forEach((n) => {
+      const key = n.category_id || "none";
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, [nominees]);
+
+  // Filtered and sorted nominees
+  const filteredAndSortedNominees = useMemo(() => {
+    let list = [...nominees];
+
+    // 1. Category Filter
+    if (selectedCategory !== "all") {
+      if (selectedCategory === "none") {
+        list = list.filter((n) => !n.category_id);
+      } else {
+        list = list.filter((n) => n.category_id === selectedCategory);
+      }
+    }
+
+    // 2. Search Query Filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter((n) => {
+        const cat = categories.find((c) => c.id === n.category_id);
+        return (
+          n.name.toLowerCase().includes(q) ||
+          (n.nominee_code && n.nominee_code.toLowerCase().includes(q)) ||
+          (n.department && n.department.toLowerCase().includes(q)) ||
+          (n.level && n.level.toLowerCase().includes(q)) ||
+          (n.bio && n.bio.toLowerCase().includes(q)) ||
+          (cat && cat.title.toLowerCase().includes(q))
+        );
+      });
+    }
+
+    // 3. Sorting
+    list.sort((a, b) => {
+      if (sortBy === "votes_desc") {
+        return (b.votes_count || 0) - (a.votes_count || 0);
+      }
+      if (sortBy === "votes_asc") {
+        return (a.votes_count || 0) - (b.votes_count || 0);
+      }
+      if (sortBy === "name_asc") {
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      }
+      if (sortBy === "name_desc") {
+        return b.name.localeCompare(a.name, undefined, { sensitivity: "base" });
+      }
+      if (sortBy === "category_asc") {
+        const catA = categories.find((c) => c.id === a.category_id)?.title || "Uncategorized";
+        const catB = categories.find((c) => c.id === b.category_id)?.title || "Uncategorized";
+        const cmp = catA.localeCompare(catB, undefined, { sensitivity: "base" });
+        if (cmp !== 0) return cmp;
+        return a.name.localeCompare(b.name);
+      }
+      if (sortBy === "code_asc") {
+        const codeA = parseInt(a.nominee_code || "999999", 10);
+        const codeB = parseInt(b.nominee_code || "999999", 10);
+        if (!isNaN(codeA) && !isNaN(codeB)) return codeA - codeB;
+        return (a.nominee_code || "").localeCompare(b.nominee_code || "");
+      }
+      if (sortBy === "code_desc") {
+        const codeA = parseInt(a.nominee_code || "0", 10);
+        const codeB = parseInt(b.nominee_code || "0", 10);
+        if (!isNaN(codeA) && !isNaN(codeB)) return codeB - codeA;
+        return (b.nominee_code || "").localeCompare(a.nominee_code || "");
+      }
+      if (sortBy === "created_desc") {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      if (sortBy === "created_asc") {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      }
+      return 0;
+    });
+
+    return list;
+  }, [nominees, categories, selectedCategory, searchQuery, sortBy]);
 
   const ussdShortcode = ussdSettings?.shortcode || "*415*123#";
   const ussdEnabled = Boolean(ussdSettings?.enabled);
+
+  const isFiltered = Boolean(selectedCategory !== "all" || searchQuery.trim() || sortBy !== "votes_desc");
+
+  const handleResetFilters = () => {
+    setSelectedCategory("all");
+    setSearchQuery("");
+    setSortBy("votes_desc");
+  };
+
+  const selectedCategoryObj = categories.find((c) => c.id === selectedCategory);
 
   return (
     <div className="min-h-screen pt-28 pb-20 bg-gradient-to-b from-background via-background/95 to-muted/30">
@@ -108,7 +212,7 @@ export default function NomineesPage() {
           </div>
         </div>
 
-        {/* USSD Promo Banner */}
+        {/* USSD Promo Banner (When USSD is Enabled) */}
         {ussdEnabled && (
           <div className="max-w-6xl mx-auto mb-10">
             <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-primary/10 to-teal-500/10 border border-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
@@ -143,7 +247,7 @@ export default function NomineesPage() {
 
         {/* PDF Documents Section */}
         {pdfDocs.length > 0 && (
-          <div className="max-w-6xl mx-auto mb-14">
+          <div className="max-w-6xl mx-auto mb-12">
             <Card className="border-border/60 shadow-sm bg-card/60 backdrop-blur-sm overflow-hidden">
               <CardHeader className="bg-muted/40 border-b border-border/40 pb-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
@@ -188,30 +292,139 @@ export default function NomineesPage() {
           </div>
         )}
 
-        {/* Filter Controls */}
-        <div className="max-w-6xl mx-auto space-y-6 mb-10">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <Tabs value={selectedCategory} onValueChange={setSelectedCategory} className="w-full md:w-auto">
-              <TabsList className="flex flex-wrap h-auto p-1 bg-muted/60">
-                <TabsTrigger value="all" className="rounded-md text-xs sm:text-sm">
-                  All Categories
-                </TabsTrigger>
-                {categories.map((cat) => (
-                  <TabsTrigger key={cat.id} value={cat.id} className="rounded-md text-xs sm:text-sm">
-                    {cat.title}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-
-            <div className="relative w-full md:w-72">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        {/* Minimalist Filter, Sort & Search Toolbar */}
+        <div className="max-w-6xl mx-auto space-y-3 mb-8">
+          <div className="p-2 sm:p-2.5 rounded-2xl bg-card border border-border/60 shadow-sm flex flex-col md:flex-row items-center gap-2.5">
+            {/* 1. Expanded Prominent Search Bar */}
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search nominee by name, code, dept..."
+                placeholder="Search nominees by name, code, department, or keyword..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 bg-card/70 border-border/60"
+                className="pl-10 pr-9 text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl focus-visible:ring-primary/30"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
+                >
+                  <XIcon className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* 2. Minimalist Compact Category Dropdown */}
+            <div className="w-full md:w-56 flex-shrink-0">
+              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                <SelectTrigger className="text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl font-medium">
+                  <div className="flex items-center gap-2 truncate">
+                    <Award className="w-4 h-4 text-primary flex-shrink-0" />
+                    <span className="truncate">
+                      {selectedCategory === "all" ? "All Categories" : selectedCategoryObj?.title || "Category"}
+                    </span>
+                  </div>
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="all">All Categories ({nominees.length})</SelectItem>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.id} value={cat.id}>
+                      {cat.title} ({categoryCounts[cat.id] || 0})
+                    </SelectItem>
+                  ))}
+                  {categoryCounts["none"] > 0 && (
+                    <SelectItem value="none">Uncategorized ({categoryCounts["none"]})</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* 3. Minimalist Compact Sort Dropdown */}
+            <div className="w-full md:w-48 flex-shrink-0 flex items-center gap-2">
+              <Select value={sortBy} onValueChange={setSortBy}>
+                <SelectTrigger className="text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl font-medium flex-1">
+                  <div className="flex items-center gap-2 truncate">
+                    <ArrowUpDown className="w-4 h-4 text-primary flex-shrink-0" />
+                    <SelectValue placeholder="Sort By" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="votes_desc">🏆 Votes: High to Low</SelectItem>
+                  <SelectItem value="votes_asc">📉 Votes: Low to High</SelectItem>
+                  <SelectItem value="name_asc">🔤 Name: A to Z</SelectItem>
+                  <SelectItem value="name_desc">🔤 Name: Z to A</SelectItem>
+                  <SelectItem value="category_asc">🎖️ Category: A to Z</SelectItem>
+                  <SelectItem value="code_asc">🔢 USSD Code (101...)</SelectItem>
+                  <SelectItem value="created_desc">🕒 Recently Added</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {isFiltered && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  title="Reset Filters"
+                  onClick={handleResetFilters}
+                  className="h-11 w-11 rounded-xl text-muted-foreground hover:text-destructive flex-shrink-0"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Minimalist Results & Active Category Indicator */}
+          <div className="flex items-center justify-between flex-wrap gap-2 px-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span>
+                Showing <strong className="text-foreground font-bold">{filteredAndSortedNominees.length}</strong> of{" "}
+                <strong className="text-foreground">{nominees.length}</strong> nominees
+              </span>
+              {selectedCategory !== "all" && selectedCategoryObj && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold text-[11px] border border-primary/20">
+                  {selectedCategoryObj.title}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategory("all")}
+                    className="hover:text-primary-foreground hover:bg-primary rounded-full p-0.5 transition-colors"
+                  >
+                    <XIcon className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+              {searchQuery && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-muted text-foreground font-semibold text-[11px] border border-border/60">
+                  &ldquo;{searchQuery}&rdquo;
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="hover:text-destructive rounded-full p-0.5 transition-colors"
+                  >
+                    <XIcon className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+            </div>
+
+            <div className="text-[11px] font-medium hidden sm:block">
+              Sorted by:{" "}
+              <strong className="text-foreground">
+                {sortBy === "votes_desc"
+                  ? "Votes (High to Low)"
+                  : sortBy === "votes_asc"
+                  ? "Votes (Low to High)"
+                  : sortBy === "name_asc"
+                  ? "Name (A to Z)"
+                  : sortBy === "name_desc"
+                  ? "Name (Z to A)"
+                  : sortBy === "category_asc"
+                  ? "Category (A to Z)"
+                  : sortBy === "code_asc"
+                  ? "Candidate Code"
+                  : "Recently Added"}
+              </strong>
             </div>
           </div>
         </div>
@@ -224,19 +437,24 @@ export default function NomineesPage() {
                 <div key={i} className="h-64 rounded-2xl bg-muted/50 animate-pulse border border-border/40" />
               ))}
             </div>
-          ) : filteredNominees.length === 0 ? (
-            <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-border bg-card/40">
-              <Award className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-60" />
+          ) : filteredAndSortedNominees.length === 0 ? (
+            <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-border bg-card/40 space-y-3">
+              <Award className="w-12 h-12 text-muted-foreground mx-auto opacity-60" />
               <h3 className="text-lg font-semibold text-foreground">No Nominees Found</h3>
-              <p className="text-sm text-muted-foreground max-w-sm mx-auto mt-1">
-                {searchQuery
-                  ? "No candidate matches your search terms. Try clearing the filter."
+              <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+                {searchQuery || selectedCategory !== "all"
+                  ? "No candidate matches your current filters or search terms."
                   : "No published nominees are available in this category yet."}
               </p>
+              {isFiltered && (
+                <Button type="button" variant="outline" size="sm" onClick={handleResetFilters} className="text-xs">
+                  Clear Filters
+                </Button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredNominees.map((nominee) => {
+              {filteredAndSortedNominees.map((nominee, index) => {
                 const categoryObj = categories.find((c) => c.id === nominee.category_id);
 
                 return (
@@ -248,17 +466,42 @@ export default function NomineesPage() {
                       <div className="h-2 bg-gradient-to-r from-emerald-500 via-primary to-teal-500" />
                       <CardHeader className="pt-5 pb-3">
                         <div className="flex items-start justify-between gap-2 mb-2">
-                          {categoryObj ? (
-                            <Badge variant="outline" className="text-xs bg-primary/5 text-primary border-primary/20">
-                              {categoryObj.title}
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary" className="text-xs">General Nominee</Badge>
-                          )}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {categoryObj ? (
+                              <Badge variant="outline" className="text-xs bg-primary/5 text-primary border-primary/20">
+                                {categoryObj.title}
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs">General Nominee</Badge>
+                            )}
+                          </div>
+
                           <div className="flex items-center gap-1">
+                            {/* Rank Badge when sorted by votes */}
+                            {sortBy === "votes_desc" && (
+                              <div
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-sm ${
+                                  index === 0 && (nominee.votes_count || 0) > 0
+                                    ? "bg-amber-500 text-white"
+                                    : index === 1 && (nominee.votes_count || 0) > 0
+                                    ? "bg-slate-400 text-white"
+                                    : index === 2 && (nominee.votes_count || 0) > 0
+                                    ? "bg-amber-700 text-white"
+                                    : "bg-muted text-muted-foreground"
+                                }`}
+                              >
+                                {index < 3 && (nominee.votes_count || 0) > 0 ? (
+                                  <Trophy className="w-3 h-3" />
+                                ) : (
+                                  <span>#</span>
+                                )}
+                                <span>{index + 1}</span>
+                              </div>
+                            )}
+
                             {nominee.nominee_code && ussdEnabled && (
                               <Badge variant="outline" className="text-[11px] font-mono font-bold bg-muted border-border/60 text-foreground">
-                                Code: {nominee.nominee_code}
+                                Code: #{nominee.nominee_code}
                               </Badge>
                             )}
                             {nominee.level && (
@@ -268,6 +511,7 @@ export default function NomineesPage() {
                             )}
                           </div>
                         </div>
+
                         <CardTitle className="text-xl font-bold text-foreground group-hover:text-primary transition-colors">
                           {nominee.name}
                         </CardTitle>
