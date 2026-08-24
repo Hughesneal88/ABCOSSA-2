@@ -13,7 +13,7 @@ type NavItem =
 const navigation: NavItem[] = [
   { name: "Home", href: "/" },
   { name: "Internships", href: "/internships" },
-  { name: "Nominees & Awards", href: "/nominees" },
+  { name: "Dinner Awards", href: "/nominees" },
   { name: "Blog & Articles", href: "/news" },
   { name: "Research", href: "/research" },
   { name: "Events", href: "/events" },

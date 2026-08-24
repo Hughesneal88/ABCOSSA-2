@@ -259,6 +259,135 @@ export function useAutoGenerateNomineeCodes() {
   });
 }
 
+const DINNER_AWARDS_SEED_KEY = "dinner_awards_2026_seed";
+
+function normalizeNomineeName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** One-time Dinner Awards category and nominee corrections. Safe to call repeatedly. */
+export async function ensureDinnerAwardsData() {
+  if (!supabase) return false;
+
+  const { data: seedRow } = await supabase
+    .from("site_settings")
+    .select("value")
+    .eq("key", DINNER_AWARDS_SEED_KEY)
+    .maybeSingle();
+
+  const { data: categories, error: catErr } = await supabase
+    .from("award_categories")
+    .select("id, title, display_order, vote_price_ghs");
+  if (catErr || !categories) return false;
+
+  const ninepence = categories.find((c) => /nine\s*pence/i.test(c.title));
+  const pals = categories.find((c) => /best\s*pals?/i.test(c.title));
+  let blogger = categories.find((c) => /^blogger of the year$/i.test(c.title));
+  const bloggerNames = ["AGABUS Blogs", "GEN Z Blogs"];
+
+  const { data: existing = [] } = await supabase
+    .from("nominees")
+    .select("id, name, nominee_code, category_id");
+
+  const hasAllBloggers = blogger
+    ? bloggerNames.every((name) =>
+        (existing ?? []).some((n) => normalizeNomineeName(n.name) === normalizeNomineeName(name))
+      )
+    : false;
+
+  const aegonNominees = (existing ?? []).filter((n) => /aegon\s*iii/i.test(n.name));
+
+  if (seedRow?.value === "applied" && !ninepence && blogger && hasAllBloggers && aegonNominees.length === 0) {
+    return false;
+  }
+
+  let changed = false;
+
+  for (const n of aegonNominees) {
+    const { error } = await supabase.from("nominees").delete().eq("id", n.id);
+    if (!error) changed = true;
+  }
+
+  if (ninepence && pals && ninepence.id !== pals.id) {
+    const { error } = await supabase
+      .from("nominees")
+      .update({ category_id: pals.id })
+      .eq("category_id", ninepence.id);
+    if (!error) {
+      await supabase.from("award_categories").delete().eq("id", ninepence.id);
+      changed = true;
+    }
+  } else if (ninepence && !pals) {
+    const { error } = await supabase
+      .from("award_categories")
+      .update({ title: "Best Pals" })
+      .eq("id", ninepence.id);
+    if (!error) changed = true;
+  }
+
+  if (!blogger) {
+    const maxOrder = categories.reduce((max, c) => Math.max(max, c.display_order || 0), 0);
+    const { data: created, error } = await supabase
+      .from("award_categories")
+      .insert({
+        title: "Blogger of the Year",
+        description: "Celebrating student blogs and digital storytellers in the ABCOSSA community.",
+        vote_price_ghs: categories[0]?.vote_price_ghs ?? 1,
+        display_order: maxOrder + 1,
+        is_active: true,
+      })
+      .select("id, title, display_order, vote_price_ghs")
+      .maybeSingle();
+    if (!error && created) {
+      blogger = created;
+      changed = true;
+    }
+  }
+
+  if (blogger) {
+    let maxCode = 100;
+    (existing ?? []).forEach((n) => {
+      const num = parseInt(n.nominee_code || "", 10);
+      if (!isNaN(num) && num > maxCode) maxCode = num;
+    });
+
+    for (const name of bloggerNames) {
+      const match = (existing ?? []).find((n) => normalizeNomineeName(n.name) === normalizeNomineeName(name));
+      if (match) {
+        if (match.category_id !== blogger.id) {
+          const { error } = await supabase
+            .from("nominees")
+            .update({ category_id: blogger.id, name })
+            .eq("id", match.id);
+          if (!error) changed = true;
+        }
+      } else {
+        maxCode += 1;
+        const { error } = await supabase.from("nominees").insert({
+          name,
+          category_id: blogger.id,
+          bio: "",
+          is_published: true,
+          nominee_code: String(maxCode),
+        });
+        if (!error) changed = true;
+      }
+    }
+  }
+
+  if (seedRow?.value !== "applied") {
+    await supabase
+      .from("site_settings")
+      .upsert({ key: DINNER_AWARDS_SEED_KEY, value: "applied" }, { onConflict: "key" });
+  }
+
+  return changed;
+}
+
 export function useVoteNominee() {
   const queryClient = useQueryClient();
 

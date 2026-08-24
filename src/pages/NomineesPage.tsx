@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Award,
   Heart,
@@ -10,6 +10,7 @@ import {
   Trophy,
   X as XIcon,
   RotateCcw,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +30,9 @@ import {
   useVoteNominee,
   useVotePrice,
   useUssdSettings,
+  ensureDinnerAwardsData,
 } from "@/hooks/useNominees";
+import { useQueryClient } from "@tanstack/react-query";
 import { formatGHS } from "@/lib/paystackClient";
 import { PaystackCheckoutModal } from "@/components/payment/PaystackCheckoutModal";
 import { UssdInstructionsModal } from "@/components/voting/UssdInstructionsModal";
@@ -45,6 +48,32 @@ export default function NomineesPage() {
   const { data: ussdSettings } = useUssdSettings();
 
   const voteMutation = useVoteNominee();
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const previousTitle = document.title;
+    document.title = "ABCOSSA Dinner Awards";
+    return () => {
+      document.title = previousTitle;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    ensureDinnerAwardsData()
+      .then((changed) => {
+        if (!cancelled && changed) {
+          queryClient.invalidateQueries({ queryKey: ["award-categories"] });
+          queryClient.invalidateQueries({ queryKey: ["nominees"] });
+        }
+      })
+      .catch(() => {
+        // Seed is best-effort; voting still works if it cannot run.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient]);
 
   const handleFreeVote = (nomineeId: string, currentVotes: number) => {
     voteMutation.mutate(
@@ -177,13 +206,13 @@ export default function NomineesPage() {
         {/* Header Hero */}
         <div className="max-w-4xl mx-auto text-center mb-10 space-y-4">
           <Badge variant="outline" className="px-3.5 py-1 text-sm border-primary/30 text-primary bg-primary/5 rounded-full inline-flex items-center gap-1.5 font-semibold">
-            <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" /> ABCOSSA Excellence Awards
+            <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" /> Vote now
           </Badge>
           <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-foreground">
-            Nominees & Recognition
+            ABCOSSA Dinner Awards
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Discover outstanding students, researchers, and student leaders nominated for ABCOSSA awards.
+            Discover outstanding students, researchers, and student leaders nominated for the ABCOSSA Dinner Awards.
             Cast your votes online{ussdEnabled ? " or via USSD shortcode" : ""}.
           </p>
 
@@ -409,7 +438,20 @@ export default function NomineesPage() {
                     className="group border border-border/60 bg-card hover:border-primary/40 hover:shadow-lg transition-all duration-300 flex flex-col justify-between overflow-hidden"
                   >
                     <div>
-                      <div className="h-2 bg-gradient-to-r from-emerald-500 via-primary to-teal-500" />
+                      <div className="relative h-48 overflow-hidden bg-muted">
+                        {nominee.image_url ? (
+                          <img
+                            src={nominee.image_url}
+                            alt={nominee.name}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 via-muted to-emerald-500/10">
+                            <User className="w-16 h-16 text-muted-foreground/40" />
+                          </div>
+                        )}
+                        <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-emerald-500 via-primary to-teal-500" />
+                      </div>
                       <CardHeader className="pt-5 pb-3">
                         <div className="flex items-start justify-between gap-2 mb-2">
                           <div className="flex items-center gap-1.5 flex-wrap">

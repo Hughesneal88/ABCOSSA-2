@@ -45,6 +45,7 @@ import {
   type AwardCategory,
   type NomineeRow,
   type NomineePdfUpload,
+  ensureDinnerAwardsData,
 } from "@/hooks/useNominees";
 import { usePayments, usePaystackSettings, useUpdatePaystackSettings } from "@/hooks/usePayments";
 import { formatGHS, type PaymentRecord } from "@/lib/paystackClient";
@@ -490,7 +491,7 @@ export default function AdminContentPage() {
             </TabsTrigger>
             <TabsTrigger value="nominees" className="gap-1.5">
               <Award className="w-3.5 h-3.5 text-amber-500" />
-              Nominees & Awards
+              Dinner Awards
             </TabsTrigger>
             <TabsTrigger value="payments" className="gap-1.5">
               <CreditCard className="w-3.5 h-3.5 text-emerald-500" />
@@ -3229,6 +3230,11 @@ function NomineesAdminPanel() {
   const [editNomineeCatId, setEditNomineeCatId] = useState("none");
   const [editNomineeBio, setEditNomineeBio] = useState("");
   const [editNomineeVotes, setEditNomineeVotes] = useState(0);
+  const [manualImageFile, setManualImageFile] = useState<File | null>(null);
+  const [manualImagePreview, setManualImagePreview] = useState<string | null>(null);
+  const [editNomineeImageFile, setEditNomineeImageFile] = useState<File | null>(null);
+  const [editNomineeImagePreview, setEditNomineeImagePreview] = useState<string | null>(null);
+  const [editNomineeClearImage, setEditNomineeClearImage] = useState(false);
 
   // Queries
   const { data: categories = [], refetch: refetchCats } = useQuery<AwardCategory[]>({
@@ -3263,6 +3269,24 @@ function NomineesAdminPanel() {
     },
     enabled: isSupabaseConfigured,
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    ensureDinnerAwardsData()
+      .then((changed) => {
+        if (cancelled || !changed) return;
+        refetchCats();
+        refetchNominees();
+        qc.invalidateQueries({ queryKey: ["award-categories"] });
+        qc.invalidateQueries({ queryKey: ["nominees"] });
+        qc.invalidateQueries({ queryKey: ["admin-award-categories"] });
+        qc.invalidateQueries({ queryKey: ["admin-nominees"] });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [qc, refetchCats, refetchNominees]);
 
   // Filter, Search, Sort & Pagination State for Published Nominees
   const [nomineeSearch, setNomineeSearch] = useState("");
@@ -3460,32 +3484,83 @@ function NomineesAdminPanel() {
     setEditNomineeCatId(n.category_id || "none");
     setEditNomineeBio(n.bio || "");
     setEditNomineeVotes(n.votes_count);
+    setEditNomineeImageFile(null);
+    setEditNomineeImagePreview(n.image_url);
+    setEditNomineeClearImage(false);
+  };
+
+  const cancelEditNominee = () => {
+    setEditingNomineeId(null);
+    setEditNomineeImageFile(null);
+    setEditNomineeImagePreview(null);
+    setEditNomineeClearImage(false);
+  };
+
+  const uploadNomineePhoto = async (file: File) => {
+    if (!supabase) throw new Error("Supabase client is not available");
+    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+    const path = `nominees/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+    const buckets = ["nominee-images", "nominee-documents"] as const;
+    let lastError: Error | null = null;
+
+    for (const bucket of buckets) {
+      const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false });
+      if (!error) {
+        return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+      }
+      lastError = error;
+    }
+
+    throw lastError ?? new Error("Failed to upload nominee photo");
+  };
+
+  const handleManualImageChange = (file: File | null) => {
+    setManualImageFile(file);
+    setManualImagePreview(file ? URL.createObjectURL(file) : null);
+  };
+
+  const handleEditImageChange = (file: File | null) => {
+    setEditNomineeImageFile(file);
+    setEditNomineeClearImage(false);
+    setEditNomineeImagePreview(file ? URL.createObjectURL(file) : null);
   };
 
   const handleSaveNomineeEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase || !editingNomineeId) return;
 
-    const { error } = await supabase
-      .from("nominees")
-      .update({
-        name: editNomineeName.trim(),
-        nominee_code: editNomineeCode.trim() || null,
-        department: editNomineeDept.trim() || null,
-        level: editNomineeLevel.trim() || null,
-        category_id: editNomineeCatId !== "none" ? editNomineeCatId : null,
-        bio: editNomineeBio.trim() || "",
-        votes_count: editNomineeVotes,
-      })
-      .eq("id", editingNomineeId);
+    try {
+      let imageUrl: string | null | undefined;
+      if (editNomineeImageFile) {
+        imageUrl = await uploadNomineePhoto(editNomineeImageFile);
+      } else if (editNomineeClearImage) {
+        imageUrl = null;
+      }
 
-    if (error) {
-      toast.error(error.message);
-    } else {
-      toast.success("Nominee updated successfully!");
-      setEditingNomineeId(null);
-      refetchNominees();
-      qc.invalidateQueries({ queryKey: ["nominees"] });
+      const { error } = await supabase
+        .from("nominees")
+        .update({
+          name: editNomineeName.trim(),
+          nominee_code: editNomineeCode.trim() || null,
+          department: editNomineeDept.trim() || null,
+          level: editNomineeLevel.trim() || null,
+          category_id: editNomineeCatId !== "none" ? editNomineeCatId : null,
+          bio: editNomineeBio.trim() || "",
+          votes_count: editNomineeVotes,
+          ...(imageUrl !== undefined ? { image_url: imageUrl } : {}),
+        })
+        .eq("id", editingNomineeId);
+
+      if (error) {
+        toast.error(error.message);
+      } else {
+        toast.success("Nominee updated successfully!");
+        cancelEditNominee();
+        refetchNominees();
+        qc.invalidateQueries({ queryKey: ["nominees"] });
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to upload nominee photo");
     }
   };
 
@@ -3718,6 +3793,7 @@ function NomineesAdminPanel() {
     if (!supabase || !manualName.trim()) return;
     setAddingNominee(true);
     try {
+      const imageUrl = manualImageFile ? await uploadNomineePhoto(manualImageFile) : null;
       const { error } = await supabase.from("nominees").insert({
         name: manualName.trim(),
         nominee_code: manualCode.trim() || null,
@@ -3725,6 +3801,7 @@ function NomineesAdminPanel() {
         level: manualLevel.trim() || null,
         category_id: manualCatId !== "none" ? manualCatId : null,
         bio: manualBio.trim() || "",
+        image_url: imageUrl,
         is_published: true,
       });
       if (error) throw error;
@@ -3735,6 +3812,8 @@ function NomineesAdminPanel() {
       setManualLevel("");
       setManualBio("");
       setManualCatId("none");
+      setManualImageFile(null);
+      setManualImagePreview(null);
       refetchNominees();
       qc.invalidateQueries({ queryKey: ["nominees"] });
     } catch (err: unknown) {
@@ -4238,6 +4317,27 @@ function NomineesAdminPanel() {
               </Select>
             </div>
             <div>
+              <Label className="text-xs">Photo (optional)</Label>
+              <div className="mt-1 flex items-center gap-3">
+                <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted border border-border/60 flex items-center justify-center shrink-0">
+                  {manualImagePreview ? (
+                    <img src={manualImagePreview} alt="Nominee preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <Image className="w-6 h-6 text-muted-foreground/60" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <Input
+                    className="text-xs"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleManualImageChange(e.target.files?.[0] ?? null)}
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">Shown on the Dinner Awards voting cards.</p>
+                </div>
+              </div>
+            </div>
+            <div>
               <Label className="text-xs">Bio / Citation</Label>
               <Textarea className="mt-1 text-xs" rows={2} placeholder="Reason for nomination" value={manualBio} onChange={(e) => setManualBio(e.target.value)} />
             </div>
@@ -4462,10 +4562,43 @@ function NomineesAdminPanel() {
                         <Label className="text-xs">Bio / Citation</Label>
                         <Textarea className="mt-1 text-xs" rows={2} value={editNomineeBio} onChange={(e) => setEditNomineeBio(e.target.value)} />
                       </div>
+                      <div className="md:col-span-3">
+                        <Label className="text-xs">Nominee photo</Label>
+                        <div className="mt-1 flex items-center gap-3">
+                          <div className="w-20 h-20 rounded-xl overflow-hidden bg-muted border border-border/60 flex items-center justify-center shrink-0">
+                            {editNomineeImagePreview && !editNomineeClearImage ? (
+                              <img src={editNomineeImagePreview} alt={editNomineeName} className="w-full h-full object-cover" />
+                            ) : (
+                              <Image className="w-7 h-7 text-muted-foreground/60" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0 space-y-1.5">
+                            <Input
+                              className="text-xs"
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleEditImageChange(e.target.files?.[0] ?? null)}
+                            />
+                            {(editNomineeImagePreview || editNomineeImageFile) && (
+                              <button
+                                type="button"
+                                className="text-[11px] text-destructive hover:underline"
+                                onClick={() => {
+                                  setEditNomineeImageFile(null);
+                                  setEditNomineeImagePreview(null);
+                                  setEditNomineeClearImage(true);
+                                }}
+                              >
+                                Remove photo
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     <div className="flex gap-2 pt-1">
                       <Button type="submit" size="sm" className="text-xs">Save Changes</Button>
-                      <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={() => setEditingNomineeId(null)}>Cancel</Button>
+                      <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={cancelEditNominee}>Cancel</Button>
                     </div>
                   </form>
                 );
@@ -4479,6 +4612,13 @@ function NomineesAdminPanel() {
                   }`}
                 >
                   <div className="flex items-start gap-3 max-w-xl">
+                    <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted border border-border/50 flex items-center justify-center shrink-0">
+                      {n.image_url ? (
+                        <img src={n.image_url} alt={n.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <Image className="w-5 h-5 text-muted-foreground/50" />
+                      )}
+                    </div>
                     {/* Rank / Index Badge */}
                     <div
                       className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-0.5 ${
