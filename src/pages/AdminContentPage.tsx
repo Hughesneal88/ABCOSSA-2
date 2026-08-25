@@ -34,6 +34,9 @@ import {
   SlidersHorizontal,
   Heart,
   Trophy,
+  Upload,
+  Camera,
+  User,
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
 import {
@@ -3220,6 +3223,9 @@ function NomineesAdminPanel() {
   const [manualLevel, setManualLevel] = useState("");
   const [manualCatId, setManualCatId] = useState("none");
   const [manualBio, setManualBio] = useState("");
+  const [manualImageFile, setManualImageFile] = useState<File | null>(null);
+  const [manualImagePreview, setManualImagePreview] = useState<string | null>(null);
+  const [manualImageUrl, setManualImageUrl] = useState("");
   const [addingNominee, setAddingNominee] = useState(false);
 
   const [editingNomineeId, setEditingNomineeId] = useState<string | null>(null);
@@ -3230,11 +3236,11 @@ function NomineesAdminPanel() {
   const [editNomineeCatId, setEditNomineeCatId] = useState("none");
   const [editNomineeBio, setEditNomineeBio] = useState("");
   const [editNomineeVotes, setEditNomineeVotes] = useState(0);
-  const [manualImageFile, setManualImageFile] = useState<File | null>(null);
-  const [manualImagePreview, setManualImagePreview] = useState<string | null>(null);
   const [editNomineeImageFile, setEditNomineeImageFile] = useState<File | null>(null);
   const [editNomineeImagePreview, setEditNomineeImagePreview] = useState<string | null>(null);
+  const [editNomineeImageUrl, setEditNomineeImageUrl] = useState("");
   const [editNomineeClearImage, setEditNomineeClearImage] = useState(false);
+  const [savingNomineeEdit, setSavingNomineeEdit] = useState(false);
 
   // Queries
   const { data: categories = [], refetch: refetchCats } = useQuery<AwardCategory[]>({
@@ -3475,6 +3481,25 @@ function NomineesAdminPanel() {
     });
   };
 
+  const uploadNomineeImage = async (file: File) => {
+    if (!supabase) return null;
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `nominee-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+    try {
+      const { error } = await supabase.storage.from("nominee-images").upload(path, file, { upsert: true });
+      if (error) {
+        // Fallback to site-images bucket
+        const { error: fbErr } = await supabase.storage.from("site-images").upload(path, file, { upsert: true });
+        if (fbErr) throw fbErr;
+        return supabase.storage.from("site-images").getPublicUrl(path).data.publicUrl;
+      }
+      return supabase.storage.from("nominee-images").getPublicUrl(path).data.publicUrl;
+    } catch (err) {
+      console.error("Nominee image upload error:", err);
+      throw err;
+    }
+  };
+
   const startEditNominee = (n: NomineeRow) => {
     setEditingNomineeId(n.id);
     setEditNomineeName(n.name);
@@ -3484,6 +3509,7 @@ function NomineesAdminPanel() {
     setEditNomineeCatId(n.category_id || "none");
     setEditNomineeBio(n.bio || "");
     setEditNomineeVotes(n.votes_count);
+    setEditNomineeImageUrl(n.image_url || "");
     setEditNomineeImageFile(null);
     setEditNomineeImagePreview(n.image_url);
     setEditNomineeClearImage(false);
@@ -3493,18 +3519,19 @@ function NomineesAdminPanel() {
     setEditingNomineeId(null);
     setEditNomineeImageFile(null);
     setEditNomineeImagePreview(null);
+    setEditNomineeImageUrl("");
     setEditNomineeClearImage(false);
   };
 
   const uploadNomineePhoto = async (file: File) => {
     if (!supabase) throw new Error("Supabase client is not available");
     const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-    const path = `nominees/${Date.now()}-${crypto.randomUUID()}.${ext}`;
-    const buckets = ["nominee-images", "nominee-documents"] as const;
+    const path = `nominees/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const buckets = ["nominee-images", "site-images", "nominee-documents"] as const;
     let lastError: Error | null = null;
 
     for (const bucket of buckets) {
-      const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false });
+      const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
       if (!error) {
         return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
       }
@@ -3528,13 +3555,12 @@ function NomineesAdminPanel() {
   const handleSaveNomineeEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase || !editingNomineeId) return;
+    setSavingNomineeEdit(true);
 
     try {
-      let imageUrl: string | null | undefined;
+      let finalImageUrl: string | null = editNomineeClearImage ? null : (editNomineeImageUrl.trim() || null);
       if (editNomineeImageFile) {
-        imageUrl = await uploadNomineePhoto(editNomineeImageFile);
-      } else if (editNomineeClearImage) {
-        imageUrl = null;
+        finalImageUrl = await uploadNomineePhoto(editNomineeImageFile);
       }
 
       const { error } = await supabase
@@ -3547,20 +3573,20 @@ function NomineesAdminPanel() {
           category_id: editNomineeCatId !== "none" ? editNomineeCatId : null,
           bio: editNomineeBio.trim() || "",
           votes_count: editNomineeVotes,
-          ...(imageUrl !== undefined ? { image_url: imageUrl } : {}),
+          image_url: finalImageUrl,
         })
         .eq("id", editingNomineeId);
 
-      if (error) {
-        toast.error(error.message);
-      } else {
-        toast.success("Nominee updated successfully!");
-        cancelEditNominee();
-        refetchNominees();
-        qc.invalidateQueries({ queryKey: ["nominees"] });
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to upload nominee photo");
+      if (error) throw error;
+      toast.success("Nominee updated successfully!");
+      cancelEditNominee();
+      refetchNominees();
+      qc.invalidateQueries({ queryKey: ["nominees"] });
+    } catch (err: unknown) {
+      const msg = typeof err === "object" && err !== null && "message" in err ? String((err as { message: unknown }).message) : "Failed to update nominee";
+      toast.error(`Nominee update error: ${msg}`);
+    } finally {
+      setSavingNomineeEdit(false);
     }
   };
 
@@ -3793,7 +3819,11 @@ function NomineesAdminPanel() {
     if (!supabase || !manualName.trim()) return;
     setAddingNominee(true);
     try {
-      const imageUrl = manualImageFile ? await uploadNomineePhoto(manualImageFile) : null;
+      let finalImageUrl = manualImageUrl.trim() || null;
+      if (manualImageFile) {
+        finalImageUrl = await uploadNomineePhoto(manualImageFile);
+      }
+
       const { error } = await supabase.from("nominees").insert({
         name: manualName.trim(),
         nominee_code: manualCode.trim() || null,
@@ -3801,7 +3831,7 @@ function NomineesAdminPanel() {
         level: manualLevel.trim() || null,
         category_id: manualCatId !== "none" ? manualCatId : null,
         bio: manualBio.trim() || "",
-        image_url: imageUrl,
+        image_url: finalImageUrl,
         is_published: true,
       });
       if (error) throw error;
@@ -3814,6 +3844,7 @@ function NomineesAdminPanel() {
       setManualCatId("none");
       setManualImageFile(null);
       setManualImagePreview(null);
+      setManualImageUrl("");
       refetchNominees();
       qc.invalidateQueries({ queryKey: ["nominees"] });
     } catch (err: unknown) {
@@ -4341,6 +4372,69 @@ function NomineesAdminPanel() {
               <Label className="text-xs">Bio / Citation</Label>
               <Textarea className="mt-1 text-xs" rows={2} placeholder="Reason for nomination" value={manualBio} onChange={(e) => setManualBio(e.target.value)} />
             </div>
+
+            {/* Nominee Photo / Portrait */}
+            <div>
+              <Label className="text-xs">Nominee Photo / Portrait (Optional)</Label>
+              <div className="mt-1 flex items-center gap-3">
+                {manualImageFile ? (
+                  <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-border flex-shrink-0 bg-muted">
+                    <img
+                      src={URL.createObjectURL(manualImageFile)}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setManualImageFile(null)}
+                      className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5"
+                    >
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : manualImageUrl ? (
+                  <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-border flex-shrink-0 bg-muted">
+                    <img
+                      src={manualImageUrl}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                      onError={(e) => { (e.target as HTMLElement).style.display = "none"; }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setManualImageUrl("")}
+                      className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5"
+                    >
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="w-12 h-12 rounded-xl border border-dashed border-border flex items-center justify-center flex-shrink-0 text-muted-foreground bg-muted/40">
+                    <Camera className="w-5 h-5 opacity-60" />
+                  </div>
+                )}
+
+                <div className="flex-1 space-y-1.5">
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    className="text-xs h-8"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setManualImageFile(file);
+                    }}
+                  />
+                  <Input
+                    type="url"
+                    placeholder="Or paste image URL (https://...)"
+                    className="text-xs h-7"
+                    value={manualImageUrl}
+                    onChange={(e) => setManualImageUrl(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
             <Button type="submit" size="sm" disabled={addingNominee} className="text-xs">
               {addingNominee ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Save Nominee"}
             </Button>
@@ -4563,41 +4657,82 @@ function NomineesAdminPanel() {
                         <Textarea className="mt-1 text-xs" rows={2} value={editNomineeBio} onChange={(e) => setEditNomineeBio(e.target.value)} />
                       </div>
                       <div className="md:col-span-3">
-                        <Label className="text-xs">Nominee photo</Label>
+                        <Label className="text-xs font-semibold">Nominee Photo / Portrait</Label>
                         <div className="mt-1 flex items-center gap-3">
-                          <div className="w-20 h-20 rounded-xl overflow-hidden bg-muted border border-border/60 flex items-center justify-center shrink-0">
-                            {editNomineeImagePreview && !editNomineeClearImage ? (
-                              <img src={editNomineeImagePreview} alt={editNomineeName} className="w-full h-full object-cover" />
-                            ) : (
-                              <Image className="w-7 h-7 text-muted-foreground/60" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0 space-y-1.5">
-                            <Input
-                              className="text-xs"
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) => handleEditImageChange(e.target.files?.[0] ?? null)}
-                            />
-                            {(editNomineeImagePreview || editNomineeImageFile) && (
+                          {editNomineeImageFile ? (
+                            <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-border flex-shrink-0 bg-muted">
+                              <img
+                                src={URL.createObjectURL(editNomineeImageFile)}
+                                alt="Preview"
+                                className="w-full h-full object-cover"
+                              />
                               <button
                                 type="button"
-                                className="text-[11px] text-destructive hover:underline"
+                                onClick={() => {
+                                  setEditNomineeImageFile(null);
+                                  setEditNomineeImagePreview(editNomineeImageUrl || null);
+                                }}
+                                className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5"
+                              >
+                                <XIcon className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (editNomineeImagePreview || editNomineeImageUrl) && !editNomineeClearImage ? (
+                            <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-border flex-shrink-0 bg-muted">
+                              <img
+                                src={editNomineeImagePreview || editNomineeImageUrl}
+                                alt="Current Photo"
+                                className="w-full h-full object-cover"
+                                onError={(e) => { (e.target as HTMLElement).style.display = "none"; }}
+                              />
+                              <button
+                                type="button"
                                 onClick={() => {
                                   setEditNomineeImageFile(null);
                                   setEditNomineeImagePreview(null);
+                                  setEditNomineeImageUrl("");
                                   setEditNomineeClearImage(true);
                                 }}
+                                className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5"
+                                title="Remove photo"
                               >
-                                Remove photo
+                                <XIcon className="w-3 h-3" />
                               </button>
-                            )}
+                            </div>
+                          ) : (
+                            <div className="w-12 h-12 rounded-xl border border-dashed border-border flex items-center justify-center flex-shrink-0 text-muted-foreground bg-muted/40">
+                              <Camera className="w-5 h-5 opacity-60" />
+                            </div>
+                          )}
+
+                          <div className="flex-1 space-y-1.5">
+                            <Input
+                              type="file"
+                              accept="image/*"
+                              className="text-xs h-8"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleEditImageChange(file);
+                              }}
+                            />
+                            <Input
+                              type="url"
+                              placeholder="Or paste image URL (https://...)"
+                              className="text-xs h-7"
+                              value={editNomineeImageUrl}
+                              onChange={(e) => {
+                                setEditNomineeImageUrl(e.target.value);
+                                setEditNomineeClearImage(false);
+                              }}
+                            />
                           </div>
                         </div>
                       </div>
                     </div>
                     <div className="flex gap-2 pt-1">
-                      <Button type="submit" size="sm" className="text-xs">Save Changes</Button>
+                      <Button type="submit" size="sm" disabled={savingNomineeEdit} className="text-xs">
+                        {savingNomineeEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Save Changes"}
+                      </Button>
                       <Button type="button" variant="ghost" size="sm" className="text-xs" onClick={cancelEditNominee}>Cancel</Button>
                     </div>
                   </form>
@@ -4612,16 +4747,9 @@ function NomineesAdminPanel() {
                   }`}
                 >
                   <div className="flex items-start gap-3 max-w-xl">
-                    <div className="w-12 h-12 rounded-lg overflow-hidden bg-muted border border-border/50 flex items-center justify-center shrink-0">
-                      {n.image_url ? (
-                        <img src={n.image_url} alt={n.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <Image className="w-5 h-5 text-muted-foreground/50" />
-                      )}
-                    </div>
                     {/* Rank / Index Badge */}
                     <div
-                      className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-0.5 ${
+                      className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-2 ${
                         nomineeSortBy === "votes_desc" && globalIndex === 1
                           ? "bg-amber-500 text-white shadow-sm"
                           : nomineeSortBy === "votes_desc" && globalIndex === 2
@@ -4632,6 +4760,29 @@ function NomineesAdminPanel() {
                       }`}
                     >
                       {globalIndex}
+                    </div>
+
+                    {/* Nominee Avatar / Thumbnail Photo */}
+                    <div className="relative w-11 h-11 rounded-xl overflow-hidden border border-border/80 flex-shrink-0 bg-muted/60 flex items-center justify-center shadow-xs">
+                      {n.image_url ? (
+                        <img
+                          src={n.image_url}
+                          alt={n.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <span className="font-bold text-xs text-primary">
+                          {n.name
+                            .split(" ")
+                            .map((p) => p[0])
+                            .slice(0, 2)
+                            .join("")
+                            .toUpperCase()}
+                        </span>
+                      )}
                     </div>
 
                     <div className="space-y-1">

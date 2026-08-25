@@ -10,7 +10,6 @@ import {
   Trophy,
   X as XIcon,
   RotateCcw,
-  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -438,33 +437,71 @@ export default function NomineesPage() {
                     className="group border border-border/60 bg-card hover:border-primary/40 hover:shadow-lg transition-all duration-300 flex flex-col justify-between overflow-hidden"
                   >
                     <div>
-                      <div className="relative h-48 overflow-hidden bg-muted">
-                        {nominee.image_url ? (
+                      {/* Nominee Portrait Image (if available) */}
+                      {nominee.image_url ? (
+                        <div className="relative h-56 w-full overflow-hidden bg-muted/40">
                           <img
                             src={nominee.image_url}
                             alt={nominee.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                            className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-105"
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = "none";
+                            }}
                           />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/10 via-muted to-emerald-500/10">
-                            <User className="w-16 h-16 text-muted-foreground/40" />
-                          </div>
-                        )}
-                        <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-emerald-500 via-primary to-teal-500" />
-                      </div>
-                      <CardHeader className="pt-5 pb-3">
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {categoryObj ? (
-                              <Badge variant="outline" className="text-xs bg-primary/5 text-primary border-primary/20">
-                                {categoryObj.title}
-                              </Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-xs">General Nominee</Badge>
+                          <div className="absolute inset-0 bg-gradient-to-t from-card via-card/10 to-black/30" />
+                          <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2">
+                            {/* Category Badge */}
+                            <Badge variant="outline" className="text-xs bg-background/90 backdrop-blur-md text-foreground font-semibold shadow-sm border-border/80">
+                              {categoryObj ? categoryObj.title : "General Nominee"}
+                            </Badge>
+
+                            {/* Rank Badge when sorted by votes */}
+                            {sortBy === "votes_desc" && (
+                              <div
+                                className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-md backdrop-blur-md ${
+                                  index === 0 && (nominee.votes_count || 0) > 0
+                                    ? "bg-amber-500 text-white"
+                                    : index === 1 && (nominee.votes_count || 0) > 0
+                                    ? "bg-slate-400 text-white"
+                                    : index === 2 && (nominee.votes_count || 0) > 0
+                                    ? "bg-amber-700 text-white"
+                                    : "bg-background/90 text-foreground border border-border/60"
+                                }`}
+                              >
+                                {index < 3 && (nominee.votes_count || 0) > 0 ? (
+                                  <Trophy className="w-3 h-3" />
+                                ) : (
+                                  <span>#</span>
+                                )}
+                                <span>{index + 1}</span>
+                              </div>
                             )}
                           </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="h-2 bg-gradient-to-r from-emerald-500 via-primary to-teal-500" />
+                          <div className="p-5 pb-0 flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500/20 via-primary/10 to-teal-500/20 border border-primary/20 flex items-center justify-center font-bold text-sm text-primary shadow-xs flex-shrink-0">
+                                {nominee.name
+                                  .split(" ")
+                                  .map((p) => p[0])
+                                  .slice(0, 2)
+                                  .join("")
+                                  .toUpperCase()}
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {categoryObj ? (
+                                  <Badge variant="outline" className="text-xs bg-primary/5 text-primary border-primary/20">
+                                    {categoryObj.title}
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="secondary" className="text-xs">General Nominee</Badge>
+                                )}
+                              </div>
+                            </div>
 
-                          <div className="flex items-center gap-1">
                             {/* Rank Badge when sorted by votes */}
                             {sortBy === "votes_desc" && (
                               <div
@@ -486,7 +523,13 @@ export default function NomineesPage() {
                                 <span>{index + 1}</span>
                               </div>
                             )}
+                          </div>
+                        </div>
+                      )}
 
+                      <CardHeader className={nominee.image_url ? "pt-4 pb-3" : "pt-3 pb-3"}>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             {nominee.nominee_code && ussdEnabled && (
                               <Badge variant="outline" className="text-[11px] font-mono font-bold bg-muted border-border/60 text-foreground">
                                 Code: #{nominee.nominee_code}
