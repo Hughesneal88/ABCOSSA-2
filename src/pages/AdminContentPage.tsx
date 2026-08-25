@@ -4348,27 +4348,6 @@ function NomineesAdminPanel() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Photo (optional)</Label>
-              <div className="mt-1 flex items-center gap-3">
-                <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted border border-border/60 flex items-center justify-center shrink-0">
-                  {manualImagePreview ? (
-                    <img src={manualImagePreview} alt="Nominee preview" className="w-full h-full object-cover" />
-                  ) : (
-                    <Image className="w-6 h-6 text-muted-foreground/60" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <Input
-                    className="text-xs"
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handleManualImageChange(e.target.files?.[0] ?? null)}
-                  />
-                  <p className="text-[10px] text-muted-foreground mt-1">Shown on the Dinner Awards voting cards.</p>
-                </div>
-              </div>
-            </div>
-            <div>
               <Label className="text-xs">Bio / Citation</Label>
               <Textarea className="mt-1 text-xs" rows={2} placeholder="Reason for nomination" value={manualBio} onChange={(e) => setManualBio(e.target.value)} />
             </div>
@@ -4377,60 +4356,54 @@ function NomineesAdminPanel() {
             <div>
               <Label className="text-xs">Nominee Photo / Portrait (Optional)</Label>
               <div className="mt-1 flex items-center gap-3">
-                {manualImageFile ? (
-                  <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-border flex-shrink-0 bg-muted">
-                    <img
-                      src={URL.createObjectURL(manualImageFile)}
-                      alt="Preview"
-                      className="w-full h-full object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setManualImageFile(null)}
-                      className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5"
-                    >
-                      <XIcon className="w-3 h-3" />
-                    </button>
-                  </div>
-                ) : manualImageUrl ? (
-                  <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-border flex-shrink-0 bg-muted">
-                    <img
-                      src={manualImageUrl}
-                      alt="Preview"
-                      className="w-full h-full object-cover"
-                      onError={(e) => { (e.target as HTMLElement).style.display = "none"; }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setManualImageUrl("")}
-                      className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5"
-                    >
-                      <XIcon className="w-3 h-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="w-12 h-12 rounded-xl border border-dashed border-border flex items-center justify-center flex-shrink-0 text-muted-foreground bg-muted/40">
-                    <Camera className="w-5 h-5 opacity-60" />
-                  </div>
-                )}
+                <div className="w-16 h-16 rounded-xl overflow-hidden bg-muted border border-border/60 flex items-center justify-center shrink-0">
+                  {manualImagePreview || manualImageUrl ? (
+                    <div className="relative w-full h-full">
+                      <img
+                        src={manualImagePreview || manualImageUrl}
+                        alt="Nominee preview"
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.target as HTMLElement).style.display = "none"; }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManualImageFile(null);
+                          setManualImagePreview(null);
+                          setManualImageUrl("");
+                        }}
+                        className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5"
+                        title="Remove photo"
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <Camera className="w-6 h-6 text-muted-foreground/60" />
+                  )}
+                </div>
 
-                <div className="flex-1 space-y-1.5">
+                <div className="flex-1 space-y-1.5 min-w-0">
                   <Input
                     type="file"
                     accept="image/*"
                     className="text-xs h-8"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) setManualImageFile(file);
-                    }}
+                    onChange={(e) => handleManualImageChange(e.target.files?.[0] ?? null)}
                   />
                   <Input
                     type="url"
                     placeholder="Or paste image URL (https://...)"
                     className="text-xs h-7"
                     value={manualImageUrl}
-                    onChange={(e) => setManualImageUrl(e.target.value)}
+                    onChange={(e) => {
+                      setManualImageUrl(e.target.value);
+                      if (e.target.value) {
+                        setManualImageFile(null);
+                        setManualImagePreview(null);
+                      }
+                    }}
                   />
+                  <p className="text-[10px] text-muted-foreground">Shown on the Dinner Awards voting cards.</p>
                 </div>
               </div>
             </div>
