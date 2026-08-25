@@ -10,6 +10,8 @@ import {
   Trophy,
   X as XIcon,
   RotateCcw,
+  Crown,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -111,6 +113,62 @@ export default function NomineesPage() {
     });
     return counts;
   }, [nominees]);
+
+  // Category-specific rank map for every nominee
+  const categoryRankings = useMemo(() => {
+    const grouped: Record<string, typeof nominees> = {};
+    nominees.forEach((n) => {
+      const key = n.category_id || "none";
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(n);
+    });
+
+    const rankMap: Record<
+      string,
+      { rank: number; total: number; isLeader: boolean; categoryTitle: string }
+    > = {};
+
+    Object.entries(grouped).forEach(([catId, list]) => {
+      const catObj = categories.find((c) => c.id === catId);
+      const catTitle = catObj?.title || (catId === "none" ? "General Nominees" : "Category");
+
+      const sorted = [...list].sort((a, b) => {
+        const diff = (b.votes_count || 0) - (a.votes_count || 0);
+        if (diff !== 0) return diff;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      });
+
+      sorted.forEach((n, idx) => {
+        rankMap[n.id] = {
+          rank: idx + 1,
+          total: sorted.length,
+          isLeader: idx === 0 && (n.votes_count || 0) > 0,
+          categoryTitle: catTitle,
+        };
+      });
+    });
+
+    return rankMap;
+  }, [nominees, categories]);
+
+  // Category-specific leaderboards summary
+  const categoryLeaderboards = useMemo(() => {
+    return categories
+      .map((cat) => {
+        const inCat = nominees.filter((n) => n.category_id === cat.id);
+        const sorted = [...inCat].sort((a, b) => (b.votes_count || 0) - (a.votes_count || 0));
+        const leader = sorted[0];
+        return {
+          category: cat,
+          nominees: sorted,
+          totalNominees: inCat.length,
+          totalVotes: inCat.reduce((sum, n) => sum + (n.votes_count || 0), 0),
+          leader: leader && (leader.votes_count || 0) > 0 ? leader : null,
+          runnerUp: sorted[1] && (sorted[1].votes_count || 0) > 0 ? sorted[1] : null,
+        };
+      })
+      .filter((c) => c.totalNominees > 0);
+  }, [categories, nominees]);
 
   // Filtered and sorted nominees
   const filteredAndSortedNominees = useMemo(() => {
@@ -232,6 +290,80 @@ export default function NomineesPage() {
             )}
           </div>
         </div>
+
+        {/* Category Leaderboard Highlights */}
+        {categoryLeaderboards.length > 0 && (
+          <div className="max-w-6xl mx-auto mb-10 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                <Trophy className="w-4 h-4 text-amber-500" />
+                Category Leaderboards & Standings
+              </h3>
+              {selectedCategory !== "all" && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategory("all")}
+                  className="text-xs text-primary hover:underline font-semibold"
+                >
+                  View All Categories
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {categoryLeaderboards.map(({ category, leader, totalNominees, totalVotes }) => {
+                const isSelected = selectedCategory === category.id;
+
+                return (
+                  <button
+                    key={category.id}
+                    type="button"
+                    onClick={() => setSelectedCategory(isSelected ? "all" : category.id)}
+                    className={`p-3.5 rounded-2xl border text-left transition-all relative overflow-hidden group flex flex-col justify-between ${
+                      isSelected
+                        ? "bg-primary/10 border-primary shadow-sm ring-1 ring-primary"
+                        : "bg-card/80 hover:bg-card border-border/60 hover:border-primary/40 hover:shadow-md"
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1.5">
+                        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                          {totalNominees} {totalNominees === 1 ? "Nominee" : "Nominees"}
+                        </span>
+                        <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                          {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
+                        </span>
+                      </div>
+
+                      <h4 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1">
+                        {category.title}
+                      </h4>
+                    </div>
+
+                    <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-xs">
+                      {leader ? (
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Crown className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                          <span className="truncate font-semibold text-foreground text-[11px]">
+                            {leader.name}
+                          </span>
+                          <span className="text-[10px] font-bold text-rose-500 flex-shrink-0">
+                            ({leader.votes_count})
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground italic">
+                          Voting in progress
+                        </span>
+                      )}
+                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform flex-shrink-0" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* USSD Promo Banner (When USSD is Enabled) */}
         {ussdEnabled && (
@@ -428,8 +560,11 @@ export default function NomineesPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredAndSortedNominees.map((nominee, index) => {
+              {filteredAndSortedNominees.map((nominee) => {
                 const categoryObj = categories.find((c) => c.id === nominee.category_id);
+                const rankInfo = categoryRankings[nominee.id];
+                const catRank = rankInfo?.rank ?? 1;
+                const hasVotes = (nominee.votes_count || 0) > 0;
 
                 return (
                   <Card
@@ -455,27 +590,27 @@ export default function NomineesPage() {
                               {categoryObj ? categoryObj.title : "General Nominee"}
                             </Badge>
 
-                            {/* Rank Badge when sorted by votes */}
-                            {sortBy === "votes_desc" && (
-                              <div
-                                className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-md backdrop-blur-md ${
-                                  index === 0 && (nominee.votes_count || 0) > 0
-                                    ? "bg-amber-500 text-white"
-                                    : index === 1 && (nominee.votes_count || 0) > 0
-                                    ? "bg-slate-400 text-white"
-                                    : index === 2 && (nominee.votes_count || 0) > 0
-                                    ? "bg-amber-700 text-white"
-                                    : "bg-background/90 text-foreground border border-border/60"
-                                }`}
-                              >
-                                {index < 3 && (nominee.votes_count || 0) > 0 ? (
-                                  <Trophy className="w-3 h-3" />
-                                ) : (
-                                  <span>#</span>
-                                )}
-                                <span>{index + 1}</span>
-                              </div>
-                            )}
+                            {/* Category-Specific Rank Badge */}
+                            <div
+                              className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-md backdrop-blur-md ${
+                                catRank === 1 && hasVotes
+                                  ? "bg-amber-500 text-white"
+                                  : catRank === 2 && hasVotes
+                                  ? "bg-slate-400 text-white"
+                                  : catRank === 3 && hasVotes
+                                  ? "bg-amber-700 text-white"
+                                  : "bg-background/90 text-foreground border border-border/60"
+                              }`}
+                            >
+                              {catRank <= 3 && hasVotes ? (
+                                <Trophy className="w-3 h-3" />
+                              ) : (
+                                <span>#</span>
+                              )}
+                              <span>
+                                {hasVotes ? `#${catRank} in Category` : `#${catRank}`}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       ) : (
@@ -502,27 +637,27 @@ export default function NomineesPage() {
                               </div>
                             </div>
 
-                            {/* Rank Badge when sorted by votes */}
-                            {sortBy === "votes_desc" && (
-                              <div
-                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-sm ${
-                                  index === 0 && (nominee.votes_count || 0) > 0
-                                    ? "bg-amber-500 text-white"
-                                    : index === 1 && (nominee.votes_count || 0) > 0
-                                    ? "bg-slate-400 text-white"
-                                    : index === 2 && (nominee.votes_count || 0) > 0
-                                    ? "bg-amber-700 text-white"
-                                    : "bg-muted text-muted-foreground"
-                                }`}
-                              >
-                                {index < 3 && (nominee.votes_count || 0) > 0 ? (
-                                  <Trophy className="w-3 h-3" />
-                                ) : (
-                                  <span>#</span>
-                                )}
-                                <span>{index + 1}</span>
-                              </div>
-                            )}
+                            {/* Category-Specific Rank Badge */}
+                            <div
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-sm ${
+                                catRank === 1 && hasVotes
+                                  ? "bg-amber-500 text-white"
+                                  : catRank === 2 && hasVotes
+                                  ? "bg-slate-400 text-white"
+                                  : catRank === 3 && hasVotes
+                                  ? "bg-amber-700 text-white"
+                                  : "bg-muted text-muted-foreground"
+                              }`}
+                            >
+                              {catRank <= 3 && hasVotes ? (
+                                <Trophy className="w-3 h-3" />
+                              ) : (
+                                <span>#</span>
+                              )}
+                              <span>
+                                {hasVotes ? `#${catRank} in Category` : `#${catRank}`}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       )}

@@ -3414,10 +3414,61 @@ function NomineesAdminPanel() {
     return nominees.reduce((sum, n) => sum + (n.votes_count || 0), 0);
   }, [nominees]);
 
-  const topNominee = useMemo(() => {
-    if (nominees.length === 0) return null;
-    return [...nominees].sort((a, b) => (b.votes_count || 0) - (a.votes_count || 0))[0];
-  }, [nominees]);
+  // Category-specific rank map for every nominee
+  const categoryRankings = useMemo(() => {
+    const grouped: Record<string, typeof nominees> = {};
+    nominees.forEach((n) => {
+      const key = n.category_id || "none";
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(n);
+    });
+
+    const rankMap: Record<
+      string,
+      { rank: number; total: number; isLeader: boolean; categoryTitle: string }
+    > = {};
+
+    Object.entries(grouped).forEach(([catId, list]) => {
+      const catObj = categories.find((c) => c.id === catId);
+      const catTitle = catObj?.title || (catId === "none" ? "General Nominees" : "Category");
+
+      const sorted = [...list].sort((a, b) => {
+        const diff = (b.votes_count || 0) - (a.votes_count || 0);
+        if (diff !== 0) return diff;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      });
+
+      sorted.forEach((n, idx) => {
+        rankMap[n.id] = {
+          rank: idx + 1,
+          total: sorted.length,
+          isLeader: idx === 0 && (n.votes_count || 0) > 0,
+          categoryTitle: catTitle,
+        };
+      });
+    });
+
+    return rankMap;
+  }, [nominees, categories]);
+
+  const activeCategoryLeader = useMemo(() => {
+    if (nomineeCategoryFilter === "all") return null;
+    const inCat = nominees.filter((n) =>
+      nomineeCategoryFilter === "none" ? !n.category_id : n.category_id === nomineeCategoryFilter
+    );
+    const sorted = [...inCat].sort((a, b) => (b.votes_count || 0) - (a.votes_count || 0));
+    return sorted[0] && (sorted[0].votes_count || 0) > 0 ? sorted[0] : null;
+  }, [nominees, nomineeCategoryFilter]);
+
+  const categoryLeadersCount = useMemo(() => {
+    let count = 0;
+    categories.forEach((c) => {
+      const inCat = nominees.filter((n) => n.category_id === c.id);
+      const hasLeader = inCat.some((n) => (n.votes_count || 0) > 0);
+      if (hasLeader) count++;
+    });
+    return count;
+  }, [categories, nominees]);
 
   const isFiltered = Boolean(
     nomineeSearch.trim() ||
@@ -4437,12 +4488,17 @@ function NomineesAdminPanel() {
             <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full font-medium text-emerald-600 dark:text-emerald-400">
               Total Votes: <strong className="font-bold">{totalVotesAcrossAll.toLocaleString()}</strong>
             </span>
-            {topNominee && topNominee.votes_count > 0 && (
+            {activeCategoryLeader ? (
               <span className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1">
                 <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                Leader: <strong>{topNominee.name}</strong> ({topNominee.votes_count})
+                Category Leader: <strong>{activeCategoryLeader.name}</strong> ({activeCategoryLeader.votes_count})
               </span>
-            )}
+            ) : categoryLeadersCount > 0 ? (
+              <span className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                Category Leaders: <strong>{categoryLeadersCount}</strong> Active
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -4720,20 +4776,33 @@ function NomineesAdminPanel() {
                   }`}
                 >
                   <div className="flex items-start gap-3 max-w-xl">
-                    {/* Rank / Index Badge */}
-                    <div
-                      className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-2 ${
-                        nomineeSortBy === "votes_desc" && globalIndex === 1
-                          ? "bg-amber-500 text-white shadow-sm"
-                          : nomineeSortBy === "votes_desc" && globalIndex === 2
-                          ? "bg-slate-400 text-white"
-                          : nomineeSortBy === "votes_desc" && globalIndex === 3
-                          ? "bg-amber-700 text-white"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {globalIndex}
-                    </div>
+                    {/* Category-Specific Rank Badge */}
+                    {(() => {
+                      const rankInfo = categoryRankings[n.id];
+                      const catRank = rankInfo?.rank ?? globalIndex;
+                      const hasVotes = (n.votes_count || 0) > 0;
+                      return (
+                        <div
+                          className={`px-2 py-0.5 rounded-md font-bold text-[10px] flex items-center gap-1 flex-shrink-0 mt-1.5 shadow-xs ${
+                            catRank === 1 && hasVotes
+                              ? "bg-amber-500 text-white shadow-sm"
+                              : catRank === 2 && hasVotes
+                              ? "bg-slate-400 text-white"
+                              : catRank === 3 && hasVotes
+                              ? "bg-amber-700 text-white"
+                              : "bg-muted text-muted-foreground border border-border/60"
+                          }`}
+                          title={`Rank #${catRank} in ${rankInfo?.categoryTitle || 'Category'}`}
+                        >
+                          {catRank <= 3 && hasVotes ? (
+                            <Trophy className="w-3 h-3" />
+                          ) : (
+                            <span>#</span>
+                          )}
+                          <span>{catRank}</span>
+                        </div>
+                      );
+                    })()}
 
                     {/* Nominee Avatar / Thumbnail Photo */}
                     <div className="relative w-11 h-11 rounded-xl overflow-hidden border border-border/80 flex-shrink-0 bg-muted/60 flex items-center justify-center shadow-xs">
@@ -4767,8 +4836,11 @@ function NomineesAdminPanel() {
                           </span>
                         )}
                         {catObj ? (
-                          <span className="px-2 py-0.5 bg-primary/10 text-primary font-medium rounded-md text-[10px]">
-                            {catObj.title}
+                          <span className="px-2 py-0.5 bg-primary/10 text-primary font-medium rounded-md text-[10px] flex items-center gap-1">
+                            <span>{catObj.title}</span>
+                            <span className="opacity-70">
+                              (#{categoryRankings[n.id]?.rank || 1})
+                            </span>
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 bg-muted text-muted-foreground rounded-md text-[10px]">
