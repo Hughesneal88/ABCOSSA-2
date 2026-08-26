@@ -29,15 +29,17 @@ export function UssdInstructionsModal({
   const [copied, setCopied] = useState(false);
   const { data: ussdSettings } = useUssdSettings();
 
-  const provider = ussdSettings?.provider || "paystack";
+  const provider = ussdSettings?.provider || "arkesel";
   const providerLabel =
-    provider === "paystack"
-      ? "Paystack USSD Voting"
+    provider === "arkesel"
+      ? "Arkesel USSD Voting"
       : provider === "hubtel"
       ? "Hubtel USSD Voting"
-      : "Arkesel USSD Voting";
+      : "Paystack USSD Voting";
 
-  const shortcode = ussdSettings?.shortcode || (provider === "paystack" ? "*415*123#" : "*713*22#");
+  const shortcode =
+    ussdSettings?.shortcode ||
+    (provider === "arkesel" ? "*920*22#" : provider === "paystack" ? "*415*123#" : "*713*22#");
   const cleanShortcode = shortcode.replace(/#$/, "");
   const fullDialString = nomineeCode ? `${cleanShortcode}*${nomineeCode}#` : shortcode;
 

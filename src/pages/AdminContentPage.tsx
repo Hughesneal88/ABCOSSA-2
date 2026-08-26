@@ -3183,9 +3183,9 @@ function NomineesAdminPanel() {
   const { data: ussdSettings } = useUssdSettings();
   const updateUssdMutation = useUpdateUssdSettings();
   const autoGenCodesMutation = useAutoGenerateNomineeCodes();
-  const [ussdProvider, setUssdProvider] = useState("paystack");
-  const [ussdShortcode, setUssdShortcode] = useState("*415*123#");
-  const [ussdEventCode, setUssdEventCode] = useState("123");
+  const [ussdProvider, setUssdProvider] = useState("arkesel");
+  const [ussdShortcode, setUssdShortcode] = useState("*920*22#");
+  const [ussdEventCode, setUssdEventCode] = useState("22");
   const [ussdEnabled, setUssdEnabled] = useState(false);
   const [ussdInstructions, setUssdInstructions] = useState("");
   const [ussdInitialized, setUssdInitialized] = useState(false);
@@ -3199,9 +3199,9 @@ function NomineesAdminPanel() {
 
   useEffect(() => {
     if (ussdSettings && !ussdInitialized) {
-      setUssdProvider(ussdSettings.provider || "paystack");
-      setUssdShortcode(ussdSettings.shortcode || "*415*123#");
-      setUssdEventCode(ussdSettings.eventCode || "123");
+      setUssdProvider(ussdSettings.provider || "arkesel");
+      setUssdShortcode(ussdSettings.shortcode || "*920*22#");
+      setUssdEventCode(ussdSettings.eventCode || "22");
       setUssdEnabled(ussdSettings.enabled);
       setUssdInstructions(ussdSettings.instructions || "");
       setUssdInitialized(true);
@@ -4024,9 +4024,9 @@ function NomineesAdminPanel() {
                   <SelectValue placeholder="Select provider" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="arkesel">Arkesel USSD (*920#) (Default)</SelectItem>
                   <SelectItem value="paystack">Paystack USSD (Ghana Pilot)</SelectItem>
                   <SelectItem value="hubtel">Hubtel USSD (*713#)</SelectItem>
-                  <SelectItem value="arkesel">Arkesel USSD (*920#)</SelectItem>
                 </SelectContent>
               </Select>
               <span className="text-[10px] text-muted-foreground mt-0.5 block">
@@ -4039,11 +4039,11 @@ function NomineesAdminPanel() {
               <Input
                 className="mt-1 font-mono font-bold text-sm"
                 placeholder={
-                  ussdProvider === "paystack"
+                  ussdProvider === "arkesel"
+                    ? "e.g. *920*22#"
+                    : ussdProvider === "paystack"
                     ? "e.g. *415*123#"
-                    : ussdProvider === "hubtel"
-                    ? "e.g. *713*22#"
-                    : "e.g. *920*22#"
+                    : "e.g. *713*22#"
                 }
                 value={ussdShortcode}
                 onChange={(e) => setUssdShortcode(e.target.value)}
