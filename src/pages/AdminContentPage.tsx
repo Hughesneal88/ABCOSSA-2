@@ -69,6 +69,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { NomineesExportModal } from "@/components/admin/NomineesExportModal";
 import { slugifyTitle, uniqueSlug } from "@/lib/slugify";
 import type { Session, User } from "@supabase/supabase-js";
 
@@ -3996,7 +3997,13 @@ function NomineesAdminPanel() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <NomineesExportModal
+              nominees={nominees}
+              categories={categories}
+              ussdSettings={ussdSettings}
+              votePrice={currentVotePrice}
+            />
             <Button
               type="button"
               variant="outline"
@@ -4480,8 +4487,14 @@ function NomineesAdminPanel() {
             </p>
           </div>
 
-          {/* Quick Metrics */}
+          {/* Quick Metrics & Actions */}
           <div className="flex items-center gap-2 flex-wrap text-xs">
+            <NomineesExportModal
+              nominees={nominees}
+              categories={categories}
+              ussdSettings={ussdSettings}
+              votePrice={currentVotePrice}
+            />
             <span className="px-3 py-1 bg-muted/60 border border-border/60 rounded-full font-medium text-foreground">
               Total: <strong className="font-bold">{nominees.length}</strong>
             </span>
