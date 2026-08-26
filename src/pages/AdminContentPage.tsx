@@ -3184,8 +3184,8 @@ function NomineesAdminPanel() {
   const updateUssdMutation = useUpdateUssdSettings();
   const autoGenCodesMutation = useAutoGenerateNomineeCodes();
   const [ussdProvider, setUssdProvider] = useState("arkesel");
-  const [ussdShortcode, setUssdShortcode] = useState("*920*22#");
-  const [ussdEventCode, setUssdEventCode] = useState("22");
+  const [ussdShortcode, setUssdShortcode] = useState("*920*667#");
+  const [ussdEventCode, setUssdEventCode] = useState("667");
   const [ussdEnabled, setUssdEnabled] = useState(false);
   const [ussdInstructions, setUssdInstructions] = useState("");
   const [ussdInitialized, setUssdInitialized] = useState(false);
@@ -3200,8 +3200,8 @@ function NomineesAdminPanel() {
   useEffect(() => {
     if (ussdSettings && !ussdInitialized) {
       setUssdProvider(ussdSettings.provider || "arkesel");
-      setUssdShortcode(ussdSettings.shortcode || "*920*22#");
-      setUssdEventCode(ussdSettings.eventCode || "22");
+      setUssdShortcode(ussdSettings.shortcode || "*920*667#");
+      setUssdEventCode(ussdSettings.eventCode || "667");
       setUssdEnabled(ussdSettings.enabled);
       setUssdInstructions(ussdSettings.instructions || "");
       setUssdInitialized(true);
@@ -4040,7 +4040,7 @@ function NomineesAdminPanel() {
                 className="mt-1 font-mono font-bold text-sm"
                 placeholder={
                   ussdProvider === "arkesel"
-                    ? "e.g. *920*22#"
+                    ? "e.g. *920*667#"
                     : ussdProvider === "paystack"
                     ? "e.g. *415*123#"
                     : "e.g. *713*22#"

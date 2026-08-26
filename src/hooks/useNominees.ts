@@ -143,8 +143,8 @@ export function useUssdSettings() {
       if (!supabase) {
         return {
           provider: "arkesel",
-          shortcode: "*920*22#",
-          eventCode: "22",
+          shortcode: "*920*667#",
+          eventCode: "667",
           enabled: false,
           instructions:
             "1. Dial the USSD code on any network (MTN, Telecel, AT)\n2. Enter Candidate Code\n3. Enter Number of Votes\n4. Authorize Mobile Money PIN prompt",
@@ -170,8 +170,8 @@ export function useUssdSettings() {
 
       return {
         provider: map["ussd_provider"] || "arkesel",
-        shortcode: map["ussd_shortcode"] || "*920*22#",
-        eventCode: map["ussd_event_code"] || "22",
+        shortcode: map["ussd_shortcode"] || "*920*667#",
+        eventCode: map["ussd_event_code"] || "667",
         enabled: map["ussd_enabled"] === "true",
         instructions:
           map["ussd_instructions"] ||

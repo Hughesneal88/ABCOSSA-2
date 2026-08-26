@@ -39,7 +39,7 @@ export function UssdInstructionsModal({
 
   const shortcode =
     ussdSettings?.shortcode ||
-    (provider === "arkesel" ? "*920*22#" : provider === "paystack" ? "*415*123#" : "*713*22#");
+    (provider === "arkesel" ? "*920*667#" : provider === "paystack" ? "*415*123#" : "*713*22#");
   const cleanShortcode = shortcode.replace(/#$/, "");
   const fullDialString = nomineeCode ? `${cleanShortcode}*${nomineeCode}#` : shortcode;
 

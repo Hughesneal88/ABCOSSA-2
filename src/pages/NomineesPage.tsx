@@ -244,7 +244,7 @@ export default function NomineesPage() {
     return list;
   }, [nominees, categories, selectedCategory, searchQuery, sortBy]);
 
-  const ussdShortcode = ussdSettings?.shortcode || "*920*22#";
+  const ussdShortcode = ussdSettings?.shortcode || "*920*667#";
   const ussdEnabled = Boolean(ussdSettings?.enabled);
 
   const isFiltered = Boolean(selectedCategory !== "all" || searchQuery.trim() || sortBy !== "votes_desc");
