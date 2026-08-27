@@ -42,6 +42,7 @@ export default function NomineesPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [sortBy, setSortBy] = useState<string>("votes_desc");
+  const [showAllLeaderboards, setShowAllLeaderboards] = useState<boolean>(false);
 
   const { data: categories = [], isLoading: loadingCategories } = useAwardCategories();
   const { data: nominees = [], isLoading: loadingNominees } = useNominees();
@@ -311,57 +312,74 @@ export default function NomineesPage() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {categoryLeaderboards.map(({ category, leader, totalNominees, totalVotes }) => {
-                const isSelected = selectedCategory === category.id;
+              {(showAllLeaderboards ? categoryLeaderboards : categoryLeaderboards.slice(0, 8)).map(
+                ({ category, leader, totalNominees, totalVotes }) => {
+                  const isSelected = selectedCategory === category.id;
 
-                return (
-                  <button
-                    key={category.id}
-                    type="button"
-                    onClick={() => setSelectedCategory(isSelected ? "all" : category.id)}
-                    className={`p-3.5 rounded-2xl border text-left transition-all relative overflow-hidden group flex flex-col justify-between ${
-                      isSelected
-                        ? "bg-primary/10 border-primary shadow-sm ring-1 ring-primary"
-                        : "bg-card/80 hover:bg-card border-border/60 hover:border-primary/40 hover:shadow-md"
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between gap-1 mb-1.5">
-                        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                          {totalNominees} {totalNominees === 1 ? "Nominee" : "Nominees"}
-                        </span>
-                        <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                          {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
-                        </span>
-                      </div>
-
-                      <h4 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1">
-                        {category.title}
-                      </h4>
-                    </div>
-
-                    <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-xs">
-                      {leader ? (
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Crown className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                          <span className="truncate font-semibold text-foreground text-[11px]">
-                            {leader.name}
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setSelectedCategory(isSelected ? "all" : category.id)}
+                      className={`p-3.5 rounded-2xl border text-left transition-all relative overflow-hidden group flex flex-col justify-between ${
+                        isSelected
+                          ? "bg-primary/10 border-primary shadow-sm ring-1 ring-primary"
+                          : "bg-card/80 hover:bg-card border-border/60 hover:border-primary/40 hover:shadow-md"
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-1.5">
+                          <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                            {totalNominees} {totalNominees === 1 ? "Nominee" : "Nominees"}
                           </span>
-                          <span className="text-[10px] font-bold text-rose-500 flex-shrink-0">
-                            ({leader.votes_count})
+                          <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                            {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
                           </span>
                         </div>
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground italic">
-                          Voting in progress
-                        </span>
-                      )}
-                      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform flex-shrink-0" />
-                    </div>
-                  </button>
-                );
-              })}
+
+                        <h4 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1">
+                          {category.title}
+                        </h4>
+                      </div>
+
+                      <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-xs">
+                        {leader ? (
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Crown className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                            <span className="truncate font-semibold text-foreground text-[11px]">
+                              {leader.name}
+                            </span>
+                            <span className="text-[10px] font-bold text-rose-500 flex-shrink-0">
+                              ({leader.votes_count})
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground italic">
+                            Voting in progress
+                          </span>
+                        )}
+                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform flex-shrink-0" />
+                      </div>
+                    </button>
+                  );
+                }
+              )}
             </div>
+
+            {categoryLeaderboards.length > 8 && (
+              <div className="flex justify-center pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowAllLeaderboards(!showAllLeaderboards)}
+                  className="text-xs font-semibold rounded-xl"
+                >
+                  {showAllLeaderboards
+                    ? "Show Less Categories"
+                    : `Show All ${categoryLeaderboards.length} Categories`}
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
