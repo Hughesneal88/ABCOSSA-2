@@ -405,8 +405,8 @@ HTML_CONTENT = """<!DOCTYPE html>
       <div class="cover-specs-grid">
         <div class="spec-box">
           <div class="spec-label">Master Shortcode</div>
-          <div class="spec-value">*920*667#</div>
-          <div class="spec-sub">Direct: *920*667*Code#</div>
+          <div class="spec-value">*928*667#</div>
+          <div class="spec-sub">Direct: *928*667*Code#</div>
         </div>
         <div class="spec-box">
           <div class="spec-label">Default Gateway</div>
@@ -438,7 +438,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       <div class="slide-title-wrap">
         <span class="slide-category">Flow 1: Express Voting</span>
         <h2 class="slide-title">Direct Voting via Candidate Code</h2>
-        <p class="slide-subtitle">Voter dials *920*667# or fast dials *920*667*101# directly</p>
+        <p class="slide-subtitle">Voter dials *928*667# or fast dials *928*667*101# directly</p>
       </div>
       <div class="page-badge">2</div>
     </div>
@@ -556,7 +556,7 @@ HTML_CONTENT = """<!DOCTYPE html>
     </div>
 
     <div class="slide-footer">
-      <span>Flow 1: Direct Candidate Voting (*920*667*101# / Menu)</span>
+      <span>Flow 1: Direct Candidate Voting (*928*667*101# / Menu)</span>
       <span>ABCOSSA USSD Voting Gateway</span>
     </div>
   </div>

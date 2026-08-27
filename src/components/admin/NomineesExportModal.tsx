@@ -42,7 +42,7 @@ export function NomineesExportModal({
   const [copiedText, setCopiedText] = useState(false);
   const [selectedCatFilter, setSelectedCatFilter] = useState<string>("all");
 
-  const masterShortcode = ussdSettings?.shortcode || "*920*667#";
+  const masterShortcode = ussdSettings?.shortcode || "*928*667#";
   const cleanShortcode = masterShortcode.replace(/#$/, "");
 
   // Group nominees by category

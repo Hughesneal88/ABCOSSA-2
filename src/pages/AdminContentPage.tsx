@@ -3185,7 +3185,7 @@ function NomineesAdminPanel() {
   const updateUssdMutation = useUpdateUssdSettings();
   const autoGenCodesMutation = useAutoGenerateNomineeCodes();
   const [ussdProvider, setUssdProvider] = useState("arkesel");
-  const [ussdShortcode, setUssdShortcode] = useState("*920*667#");
+  const [ussdShortcode, setUssdShortcode] = useState("*928*667#");
   const [ussdEventCode, setUssdEventCode] = useState("667");
   const [ussdEnabled, setUssdEnabled] = useState(false);
   const [ussdInstructions, setUssdInstructions] = useState("");
@@ -3201,7 +3201,7 @@ function NomineesAdminPanel() {
   useEffect(() => {
     if (ussdSettings && !ussdInitialized) {
       setUssdProvider(ussdSettings.provider || "arkesel");
-      setUssdShortcode(ussdSettings.shortcode || "*920*667#");
+      setUssdShortcode(ussdSettings.shortcode || "*928*667#");
       setUssdEventCode(ussdSettings.eventCode || "667");
       setUssdEnabled(ussdSettings.enabled);
       setUssdInstructions(ussdSettings.instructions || "");
@@ -4031,7 +4031,7 @@ function NomineesAdminPanel() {
                   <SelectValue placeholder="Select provider" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="arkesel">Arkesel USSD (*920#) (Default)</SelectItem>
+                  <SelectItem value="arkesel">Arkesel USSD (*928#) (Default)</SelectItem>
                   <SelectItem value="paystack">Paystack USSD (Ghana Pilot)</SelectItem>
                   <SelectItem value="hubtel">Hubtel USSD (*713#)</SelectItem>
                 </SelectContent>
@@ -4047,7 +4047,7 @@ function NomineesAdminPanel() {
                 className="mt-1 font-mono font-bold text-sm"
                 placeholder={
                   ussdProvider === "arkesel"
-                    ? "e.g. *920*667#"
+                    ? "e.g. *928*667#"
                     : ussdProvider === "paystack"
                     ? "e.g. *415*123#"
                     : "e.g. *713*22#"

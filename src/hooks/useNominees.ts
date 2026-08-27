@@ -143,7 +143,7 @@ export function useUssdSettings() {
       if (!supabase) {
         return {
           provider: "arkesel",
-          shortcode: "*920*667#",
+          shortcode: "*928*667#",
           eventCode: "667",
           enabled: false,
           instructions:
@@ -170,7 +170,7 @@ export function useUssdSettings() {
 
       return {
         provider: map["ussd_provider"] || "arkesel",
-        shortcode: map["ussd_shortcode"] || "*920*667#",
+        shortcode: map["ussd_shortcode"] || "*928*667#",
         eventCode: map["ussd_event_code"] || "667",
         enabled: map["ussd_enabled"] === "true",
         instructions:
