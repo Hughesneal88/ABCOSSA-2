@@ -4104,22 +4104,29 @@ function NomineesAdminPanel() {
 
           {/* Webhook / USSD URL Box */}
           {(() => {
-            const webhookUrl =
+            const supabaseBase = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+            const functionName =
               ussdProvider === "paystack"
-                ? `${window.location.origin}/functions/v1/paystack-ussd`
+                ? "paystack-ussd"
                 : ussdProvider === "hubtel"
-                ? `${window.location.origin}/functions/v1/hubtel-ussd-webhook`
-                : `${window.location.origin}/functions/v1/arkesel-ussd-webhook`;
+                ? "hubtel-ussd-webhook"
+                : "arkesel-ussd-webhook";
+
+            const webhookUrl = supabaseBase
+              ? `${supabaseBase}/functions/v1/${functionName}`
+              : `${window.location.origin}/functions/v1/${functionName}`;
 
             const providerTitle =
               ussdProvider === "paystack"
-                ? "Paystack USSD URL (Paste in Paystack USSD Settings)"
+                ? "Paystack USSD Endpoint URL (Paste in Paystack USSD Settings)"
                 : ussdProvider === "hubtel"
-                ? "Hubtel USSD URL (Paste in Hubtel Developer Portal)"
-                : "Arkesel Webhook URL (Paste in Arkesel Dashboard)";
+                ? "Hubtel USSD Endpoint URL (Paste in Hubtel Developer Portal)"
+                : "Arkesel Webhook / USSD URL (Paste in Arkesel Portal)";
+
+            const deployCommand = `supabase functions deploy ${functionName} --no-verify-jwt`;
 
             return (
-              <div className="p-3.5 rounded-xl bg-muted/40 border border-border/60 space-y-1.5">
+              <div className="p-3.5 rounded-xl bg-muted/40 border border-border/60 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
                     <PhoneCall className="w-3.5 h-3.5 text-emerald-500" /> {providerTitle}
@@ -4137,16 +4144,30 @@ function NomineesAdminPanel() {
                     <Copy className="w-3 h-3" /> Copy URL
                   </Button>
                 </div>
-                <code className="text-[11px] font-mono text-muted-foreground block select-all bg-background p-2 rounded border border-border/40">
+                <code className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 block select-all bg-background p-2 rounded border border-border/40 font-bold break-all">
                   {webhookUrl}
                 </code>
-                <p className="text-[10px] text-muted-foreground">
-                  {ussdProvider === "paystack"
-                    ? "Handles Paystack USSD interactive sessions and auto-charges voters via Mobile Money."
-                    : ussdProvider === "hubtel"
-                    ? "Handles Hubtel Programmable USSD interactive menus and incoming payment notifications."
-                    : "Handles Arkesel USSD callbacks to credit candidate votes automatically."}
-                </p>
+                
+                <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10px] text-muted-foreground flex-wrap gap-1">
+                  <span>
+                    {ussdProvider === "arkesel"
+                      ? "Handles *928*667# interactive sessions, nominee direct dials (*928*667*Code#), and MoMo payment triggers."
+                      : ussdProvider === "paystack"
+                      ? "Handles Paystack USSD interactive sessions and auto-charges voters via Mobile Money."
+                      : "Receives Hubtel programmable USSD sessions and mobile money transaction callbacks."}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(deployCommand);
+                      toast.success("Copied Supabase deploy command!");
+                    }}
+                    className="font-mono text-[10px] text-primary hover:underline flex items-center gap-1"
+                    title="Click to copy deployment command"
+                  >
+                    <Copy className="w-2.5 h-2.5" /> Deploy: <code>{deployCommand}</code>
+                  </button>
+                </div>
               </div>
             );
           })()}

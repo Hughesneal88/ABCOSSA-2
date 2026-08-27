@@ -1,0 +1,16 @@
+project_id = "abcossa"
+
+[functions.arkesel-ussd-webhook]
+verify_jwt = false
+
+[functions.hubtel-ussd-webhook]
+verify_jwt = false
+
+[functions.paystack-ussd]
+verify_jwt = false
+
+[functions.paystack-webhook]
+verify_jwt = false
+
+[functions.send-contact-email]
+verify_jwt = false
