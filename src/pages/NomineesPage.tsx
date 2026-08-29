@@ -249,6 +249,7 @@ export default function NomineesPage() {
   const ussdEnabled = Boolean(ussdSettings?.enabled);
 
   const isFiltered = Boolean(selectedCategory !== "all" || searchQuery.trim() || sortBy !== "votes_desc");
+  const hasSearched = Boolean(searchQuery.trim().length > 0 || selectedCategory !== "all");
 
   const handleResetFilters = () => {
     setSelectedCategory("all");
@@ -258,11 +259,40 @@ export default function NomineesPage() {
 
   const selectedCategoryObj = categories.find((c) => c.id === selectedCategory);
 
+  // Filter category leaderboards to only show categories matching the search or selected category
+  const matchingCategoryLeaderboards = useMemo(() => {
+    if (!hasSearched) return [];
+
+    return categoryLeaderboards.filter(({ category, nominees: catNominees }) => {
+      if (selectedCategory !== "all") {
+        if (category.id !== selectedCategory) return false;
+      }
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const catMatches =
+          category.title.toLowerCase().includes(q) ||
+          (category.description && category.description.toLowerCase().includes(q));
+        const hasMatchingNominee = catNominees.some(
+          (n) =>
+            n.name.toLowerCase().includes(q) ||
+            (n.nominee_code && n.nominee_code.toLowerCase().includes(q)) ||
+            (n.department && n.department.toLowerCase().includes(q)) ||
+            (n.level && n.level.toLowerCase().includes(q)) ||
+            (n.bio && n.bio.toLowerCase().includes(q))
+        );
+        return catMatches || hasMatchingNominee;
+      }
+
+      return true;
+    });
+  }, [hasSearched, selectedCategory, searchQuery, categoryLeaderboards]);
+
   return (
     <div className="min-h-screen pt-28 pb-20 bg-gradient-to-b from-background via-background/95 to-muted/30">
       <div className="container mx-auto px-4 lg:px-8">
         {/* Header Hero */}
-        <div className="max-w-4xl mx-auto text-center mb-10 space-y-4">
+        <div className="max-w-4xl mx-auto text-center mb-8 space-y-4">
           <Badge variant="outline" className="px-3.5 py-1 text-sm border-primary/30 text-primary bg-primary/5 rounded-full inline-flex items-center gap-1.5 font-semibold">
             <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" /> Vote now
           </Badge>
@@ -292,13 +322,184 @@ export default function NomineesPage() {
           </div>
         </div>
 
-        {/* Category Leaderboard Highlights */}
-        {categoryLeaderboards.length > 0 && (
-          <div className="max-w-6xl mx-auto mb-10 space-y-3">
+        {/* USSD Promo Banner (When USSD is Enabled) */}
+        {ussdEnabled && (
+          <div className="max-w-6xl mx-auto mb-8">
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-primary/10 to-teal-500/10 border border-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                  <PhoneCall className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
+                    Vote via Mobile USSD Code
+                    <Badge variant="secondary" className="text-[10px] px-2 py-0.5">MTN • Telecel • AT</Badge>
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    No internet required. Dial <strong className="text-foreground">{ussdShortcode}</strong> and enter candidate&apos;s 3-digit code to vote instantly.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <UssdInstructionsModal
+                  trigger={
+                    <Button size="sm" variant="outline" className="text-xs font-semibold w-full sm:w-auto gap-1.5">
+                      <Smartphone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      View USSD Guide
+                    </Button>
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 1. Primary Search Bar & Filter Toolbar (comes BEFORE categories) */}
+        <div className="max-w-6xl mx-auto space-y-3 mb-8">
+          <div className="p-2 sm:p-2.5 rounded-2xl bg-card border border-border/60 shadow-sm flex flex-col md:flex-row items-center gap-2.5">
+            {/* Expanded Prominent Search Bar */}
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search nominees by name, code #101, department, or award category..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 pr-9 text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl focus-visible:ring-primary/30"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
+                >
+                  <XIcon className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Category Dropdown */}
+            <div className="w-full md:w-56 flex-shrink-0">
+              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                <SelectTrigger className="text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl font-medium">
+                  <div className="flex items-center gap-2 truncate">
+                    <Award className="w-4 h-4 text-primary flex-shrink-0" />
+                    <span className="truncate">
+                      {selectedCategory === "all" ? "Select Category" : selectedCategoryObj?.title || "Category"}
+                    </span>
+                  </div>
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="all">All Categories ({nominees.length})</SelectItem>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.id} value={cat.id}>
+                      {cat.title} ({categoryCounts[cat.id] || 0})
+                    </SelectItem>
+                  ))}
+                  {categoryCounts["none"] > 0 && (
+                    <SelectItem value="none">Uncategorized ({categoryCounts["none"]})</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Sort Dropdown */}
+            <div className="w-full md:w-48 flex-shrink-0 flex items-center gap-2">
+              <Select value={sortBy} onValueChange={setSortBy}>
+                <SelectTrigger className="text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl font-medium flex-1">
+                  <div className="flex items-center gap-2 truncate">
+                    <ArrowUpDown className="w-4 h-4 text-primary flex-shrink-0" />
+                    <SelectValue placeholder="Sort By" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="votes_desc">Votes: High to Low</SelectItem>
+                  <SelectItem value="votes_asc">Votes: Low to High</SelectItem>
+                  <SelectItem value="name_asc">Name: A to Z</SelectItem>
+                  <SelectItem value="name_desc">Name: Z to A</SelectItem>
+                  <SelectItem value="category_asc">Category: A to Z</SelectItem>
+                  <SelectItem value="code_asc">USSD Code (101...)</SelectItem>
+                  <SelectItem value="created_desc">Recently Added</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {isFiltered && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  title="Reset Filters"
+                  onClick={handleResetFilters}
+                  className="h-11 w-11 rounded-xl text-muted-foreground hover:text-destructive flex-shrink-0"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Results Summary Bar */}
+          {hasSearched && (
+            <div className="flex items-center justify-between flex-wrap gap-2 px-2 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span>
+                  Found <strong className="text-foreground font-bold">{filteredAndSortedNominees.length}</strong> matching candidate{filteredAndSortedNominees.length === 1 ? "" : "s"}
+                </span>
+                {selectedCategory !== "all" && selectedCategoryObj && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold text-[11px] border border-primary/20">
+                    {selectedCategoryObj.title}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategory("all")}
+                      className="hover:text-primary-foreground hover:bg-primary rounded-full p-0.5 transition-colors"
+                    >
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+                {searchQuery && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-muted text-foreground font-semibold text-[11px] border border-border/60">
+                    &ldquo;{searchQuery}&rdquo;
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      className="hover:text-destructive rounded-full p-0.5 transition-colors"
+                    >
+                      <XIcon className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+              </div>
+
+              <div className="text-[11px] font-medium hidden sm:block">
+                Sorted by:{" "}
+                <strong className="text-foreground">
+                  {sortBy === "votes_desc"
+                    ? "Votes (High to Low)"
+                    : sortBy === "votes_asc"
+                    ? "Votes (Low to High)"
+                    : sortBy === "name_asc"
+                    ? "Name (A to Z)"
+                    : sortBy === "name_desc"
+                    ? "Name (Z to A)"
+                    : sortBy === "category_asc"
+                    ? "Category (A to Z)"
+                    : sortBy === "code_asc"
+                    ? "Candidate Code"
+                    : "Recently Added"}
+                </strong>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 2. Category Standings (ONLY shown when searching name or category) */}
+        {hasSearched && matchingCategoryLeaderboards.length > 0 && (
+          <div className="max-w-6xl mx-auto mb-8 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
                 <Trophy className="w-4 h-4 text-amber-500" />
-                Category Leaderboards & Standings
+                Matching Category Standings ({matchingCategoryLeaderboards.length})
               </h3>
               {selectedCategory !== "all" && (
                 <button
@@ -306,13 +507,13 @@ export default function NomineesPage() {
                   onClick={() => setSelectedCategory("all")}
                   className="text-xs text-primary hover:underline font-semibold"
                 >
-                  View All Categories
+                  Clear Category Filter
                 </button>
               )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {(showAllLeaderboards ? categoryLeaderboards : categoryLeaderboards.slice(0, 8)).map(
+              {(showAllLeaderboards ? matchingCategoryLeaderboards : matchingCategoryLeaderboards.slice(0, 8)).map(
                 ({ category, leader, totalNominees, totalVotes }) => {
                   const isSelected = selectedCategory === category.id;
 
@@ -366,7 +567,7 @@ export default function NomineesPage() {
               )}
             </div>
 
-            {categoryLeaderboards.length > 8 && (
+            {matchingCategoryLeaderboards.length > 8 && (
               <div className="flex justify-center pt-2">
                 <Button
                   variant="outline"
@@ -376,186 +577,30 @@ export default function NomineesPage() {
                 >
                   {showAllLeaderboards
                     ? "Show Less Categories"
-                    : `Show All ${categoryLeaderboards.length} Categories`}
+                    : `Show All ${matchingCategoryLeaderboards.length} Categories`}
                 </Button>
               </div>
             )}
           </div>
         )}
 
-        {/* USSD Promo Banner (When USSD is Enabled) */}
-        {ussdEnabled && (
-          <div className="max-w-6xl mx-auto mb-10">
-            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-primary/10 to-teal-500/10 border border-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
-                  <PhoneCall className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
-                    Vote via Mobile USSD Code
-                    <Badge variant="secondary" className="text-[10px] px-2 py-0.5">MTN • Telecel • AT</Badge>
-                  </h4>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    No internet required. Dial <strong className="text-foreground">{ussdShortcode}</strong> and enter candidate&apos;s 3-digit code to vote instantly.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <UssdInstructionsModal
-                  trigger={
-                    <Button size="sm" variant="outline" className="text-xs font-semibold w-full sm:w-auto gap-1.5">
-                      <Smartphone className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                      View USSD Guide
-                    </Button>
-                  }
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Minimalist Filter, Sort & Search Toolbar */}
-        <div className="max-w-6xl mx-auto space-y-3 mb-8">
-          <div className="p-2 sm:p-2.5 rounded-2xl bg-card border border-border/60 shadow-sm flex flex-col md:flex-row items-center gap-2.5">
-            {/* 1. Expanded Prominent Search Bar */}
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search nominees by name, code, department, or keyword..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-9 text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl focus-visible:ring-primary/30"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
-                >
-                  <XIcon className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
-            {/* 2. Minimalist Compact Category Dropdown */}
-            <div className="w-full md:w-56 flex-shrink-0">
-              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                <SelectTrigger className="text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl font-medium">
-                  <div className="flex items-center gap-2 truncate">
-                    <Award className="w-4 h-4 text-primary flex-shrink-0" />
-                    <span className="truncate">
-                      {selectedCategory === "all" ? "All Categories" : selectedCategoryObj?.title || "Category"}
-                    </span>
-                  </div>
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  <SelectItem value="all">All Categories ({nominees.length})</SelectItem>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id}>
-                      {cat.title} ({categoryCounts[cat.id] || 0})
-                    </SelectItem>
-                  ))}
-                  {categoryCounts["none"] > 0 && (
-                    <SelectItem value="none">Uncategorized ({categoryCounts["none"]})</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* 3. Minimalist Compact Sort Dropdown (No Emojis) */}
-            <div className="w-full md:w-48 flex-shrink-0 flex items-center gap-2">
-              <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="text-xs sm:text-sm h-11 bg-background/80 border-border/60 rounded-xl font-medium flex-1">
-                  <div className="flex items-center gap-2 truncate">
-                    <ArrowUpDown className="w-4 h-4 text-primary flex-shrink-0" />
-                    <SelectValue placeholder="Sort By" />
-                  </div>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="votes_desc">Votes: High to Low</SelectItem>
-                  <SelectItem value="votes_asc">Votes: Low to High</SelectItem>
-                  <SelectItem value="name_asc">Name: A to Z</SelectItem>
-                  <SelectItem value="name_desc">Name: Z to A</SelectItem>
-                  <SelectItem value="category_asc">Category: A to Z</SelectItem>
-                  <SelectItem value="code_asc">USSD Code (101...)</SelectItem>
-                  <SelectItem value="created_desc">Recently Added</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {isFiltered && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  title="Reset Filters"
-                  onClick={handleResetFilters}
-                  className="h-11 w-11 rounded-xl text-muted-foreground hover:text-destructive flex-shrink-0"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {/* Minimalist Results & Active Category Indicator */}
-          <div className="flex items-center justify-between flex-wrap gap-2 px-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span>
-                Showing <strong className="text-foreground font-bold">{filteredAndSortedNominees.length}</strong> of{" "}
-                <strong className="text-foreground">{nominees.length}</strong> nominees
-              </span>
-              {selectedCategory !== "all" && selectedCategoryObj && (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary font-semibold text-[11px] border border-primary/20">
-                  {selectedCategoryObj.title}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCategory("all")}
-                    className="hover:text-primary-foreground hover:bg-primary rounded-full p-0.5 transition-colors"
-                  >
-                    <XIcon className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
-              {searchQuery && (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-muted text-foreground font-semibold text-[11px] border border-border/60">
-                  &ldquo;{searchQuery}&rdquo;
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery("")}
-                    className="hover:text-destructive rounded-full p-0.5 transition-colors"
-                  >
-                    <XIcon className="w-3 h-3" />
-                  </button>
-                </span>
-              )}
-            </div>
-
-            <div className="text-[11px] font-medium hidden sm:block">
-              Sorted by:{" "}
-              <strong className="text-foreground">
-                {sortBy === "votes_desc"
-                  ? "Votes (High to Low)"
-                  : sortBy === "votes_asc"
-                  ? "Votes (Low to High)"
-                  : sortBy === "name_asc"
-                  ? "Name (A to Z)"
-                  : sortBy === "name_desc"
-                  ? "Name (Z to A)"
-                  : sortBy === "category_asc"
-                  ? "Category (A to Z)"
-                  : sortBy === "code_asc"
-                  ? "Candidate Code"
-                  : "Recently Added"}
-              </strong>
-            </div>
-          </div>
-        </div>
-
-        {/* Nominees Grid */}
+        {/* Nominees Grid / Search Initiation State */}
         <div className="max-w-6xl mx-auto">
-          {loadingNominees || loadingCategories ? (
+          {!hasSearched ? (
+            <div className="max-w-2xl mx-auto text-center py-16 px-6 rounded-3xl border border-dashed border-border/80 bg-card/40 space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
+                <Search className="w-7 h-7" />
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="text-lg sm:text-xl font-bold text-foreground">
+                  Search Nominees & Award Categories
+                </h3>
+                <p className="text-xs sm:text-sm text-muted-foreground max-w-md mx-auto">
+                  Type a nominee name, candidate code (e.g. 101), or select an award category from the dropdown above to discover contenders and cast your votes.
+                </p>
+              </div>
+            </div>
+          ) : loadingNominees || loadingCategories ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div key={i} className="h-64 rounded-2xl bg-muted/50 animate-pulse border border-border/40" />
