@@ -7,6 +7,7 @@ import {
   PhoneCall,
   Smartphone,
   ArrowUpDown,
+  ArrowLeft,
   Trophy,
   X as XIcon,
   RotateCcw,
@@ -493,137 +494,158 @@ export default function NomineesPage() {
           )}
         </div>
 
-        {/* 2. Category Standings (ONLY shown when searching name or category) */}
-        {hasSearched && matchingCategoryLeaderboards.length > 0 && (
-          <div className="max-w-6xl mx-auto mb-8 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                <Trophy className="w-4 h-4 text-amber-500" />
-                Matching Category Standings ({matchingCategoryLeaderboards.length})
-              </h3>
-              {selectedCategory !== "all" && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedCategory("all")}
-                  className="text-xs text-primary hover:underline font-semibold"
-                >
-                  Clear Category Filter
-                </button>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {(showAllLeaderboards ? matchingCategoryLeaderboards : matchingCategoryLeaderboards.slice(0, 8)).map(
-                ({ category, leader, totalNominees, totalVotes }) => {
-                  const isSelected = selectedCategory === category.id;
-
-                  return (
-                    <button
-                      key={category.id}
-                      type="button"
-                      onClick={() => setSelectedCategory(isSelected ? "all" : category.id)}
-                      className={`p-3.5 rounded-2xl border text-left transition-all relative overflow-hidden group flex flex-col justify-between ${
-                        isSelected
-                          ? "bg-primary/10 border-primary shadow-sm ring-1 ring-primary"
-                          : "bg-card/80 hover:bg-card border-border/60 hover:border-primary/40 hover:shadow-md"
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-1 mb-1.5">
-                          <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
-                            {totalNominees} {totalNominees === 1 ? "Nominee" : "Nominees"}
-                          </span>
-                          <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                            {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
-                          </span>
-                        </div>
-
-                        <h4 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1">
-                          {category.title}
-                        </h4>
-                      </div>
-
-                      <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-xs">
-                        {leader ? (
-                          <div className="flex items-center gap-2 min-w-0">
-                            <Crown className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                            <span className="truncate font-semibold text-foreground text-[11px]">
-                              {leader.name}
-                            </span>
-                            <span className="text-[10px] font-bold text-rose-500 flex-shrink-0">
-                              ({leader.votes_count})
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-muted-foreground italic">
-                            Voting in progress
-                          </span>
-                        )}
-                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform flex-shrink-0" />
-                      </div>
-                    </button>
-                  );
-                }
-              )}
-            </div>
-
-            {matchingCategoryLeaderboards.length > 8 && (
-              <div className="flex justify-center pt-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowAllLeaderboards(!showAllLeaderboards)}
-                  className="text-xs font-semibold rounded-xl"
-                >
-                  {showAllLeaderboards
-                    ? "Show Less Categories"
-                    : `Show All ${matchingCategoryLeaderboards.length} Categories`}
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Nominees Grid / Search Initiation State */}
-        <div className="max-w-6xl mx-auto">
-          {!hasSearched ? (
-            <div className="max-w-2xl mx-auto text-center py-16 px-6 rounded-3xl border border-dashed border-border/80 bg-card/40 space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
-                <Search className="w-7 h-7" />
-              </div>
-              <div className="space-y-1.5">
-                <h3 className="text-lg sm:text-xl font-bold text-foreground">
-                  Search Nominees & Award Categories
-                </h3>
-                <p className="text-xs sm:text-sm text-muted-foreground max-w-md mx-auto">
-                  Type a nominee name, candidate code (e.g. 101), or select an award category from the dropdown above to discover contenders and cast your votes.
+        {/* View 1: Award Categories Grid (Default view when no category/search is selected) */}
+        {!hasSearched ? (
+          <div className="max-w-6xl mx-auto mb-12 space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold text-foreground flex items-center gap-2">
+                  <Award className="w-5 h-5 text-primary" />
+                  Award Categories ({categoryLeaderboards.length})
+                </h2>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
+                  Select an award category below to view nominees and cast your votes.
                 </p>
               </div>
             </div>
-          ) : loadingNominees || loadingCategories ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="h-64 rounded-2xl bg-muted/50 animate-pulse border border-border/40" />
-              ))}
-            </div>
-          ) : filteredAndSortedNominees.length === 0 ? (
-            <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-border bg-card/40 space-y-3">
-              <Award className="w-12 h-12 text-muted-foreground mx-auto opacity-60" />
-              <h3 className="text-lg font-semibold text-foreground">No Nominees Found</h3>
-              <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-                {searchQuery || selectedCategory !== "all"
-                  ? "No candidate matches your current filters or search terms."
-                  : "No published nominees are available in this category yet."}
-              </p>
-              {isFiltered && (
-                <Button type="button" variant="outline" size="sm" onClick={handleResetFilters} className="text-xs">
-                  Clear Filters
+
+            {loadingCategories ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} className="h-40 rounded-2xl bg-muted/50 animate-pulse border border-border/40" />
+                ))}
+              </div>
+            ) : categoryLeaderboards.length === 0 ? (
+              <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-border bg-card/40 space-y-3">
+                <Award className="w-12 h-12 text-muted-foreground mx-auto opacity-60" />
+                <h3 className="text-lg font-semibold text-foreground">No Categories Available</h3>
+                <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+                  Award categories are currently being updated. Please check back soon.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {categoryLeaderboards.map(({ category, leader, totalNominees, totalVotes }) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedCategory(category.id);
+                      window.scrollTo({ top: 380, behavior: "smooth" });
+                    }}
+                    className="p-5 rounded-2xl border border-border/70 bg-card hover:border-primary/60 hover:shadow-md hover:bg-card/90 transition-all duration-200 text-left flex flex-col justify-between group relative overflow-hidden cursor-pointer"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Badge variant="outline" className="text-[11px] font-semibold bg-primary/5 border-primary/20 text-primary">
+                          {totalNominees} {totalNominees === 1 ? "Nominee" : "Nominees"}
+                        </Badge>
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                          {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
+                        </span>
+                      </div>
+
+                      <h3 className="text-base font-bold text-foreground group-hover:text-primary transition-colors line-clamp-2">
+                        {category.title}
+                      </h3>
+
+                      {category.description && (
+                        <p className="text-xs text-muted-foreground line-clamp-2">
+                          {category.description}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between text-xs">
+                      {leader ? (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Crown className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                          <span className="text-[11px] text-muted-foreground">Leading:</span>
+                          <span className="font-semibold text-foreground truncate text-[11px]">
+                            {leader.name}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground italic">
+                          Voting open
+                        </span>
+                      )}
+
+                      <span className="text-xs font-semibold text-primary inline-flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+                        View Nominees <ChevronRight className="w-4 h-4" />
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* View 2: Nominees in Selected Category or Search Results */
+          <div className="max-w-6xl mx-auto space-y-6">
+            {/* Category Drilldown Navigation Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-card border border-border/60 shadow-xs">
+              <div className="flex items-center gap-3 min-w-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleResetFilters}
+                  className="text-xs font-semibold gap-1.5 rounded-xl flex-shrink-0"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> All Categories
                 </Button>
-              )}
+                <div className="min-w-0">
+                  <h2 className="text-base sm:text-lg font-bold text-foreground flex items-center gap-2 truncate">
+                    <Award className="w-4 h-4 text-primary flex-shrink-0" />
+                    <span className="truncate">
+                      {searchQuery
+                        ? `Search: "${searchQuery}"`
+                        : selectedCategoryObj
+                        ? selectedCategoryObj.title
+                        : "Category Nominees"}
+                    </span>
+                  </h2>
+                  {selectedCategoryObj?.description && !searchQuery && (
+                    <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                      {selectedCategoryObj.description}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0 text-xs">
+                <Badge variant="secondary" className="text-xs font-semibold">
+                  {filteredAndSortedNominees.length} {filteredAndSortedNominees.length === 1 ? "Nominee" : "Nominees"}
+                </Badge>
+              </div>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredAndSortedNominees.map((nominee) => {
+
+            {/* Nominees Grid */}
+            {loadingNominees || loadingCategories ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} className="h-64 rounded-2xl bg-muted/50 animate-pulse border border-border/40" />
+                ))}
+              </div>
+            ) : filteredAndSortedNominees.length === 0 ? (
+              <div className="text-center py-16 px-4 rounded-2xl border border-dashed border-border bg-card/40 space-y-3">
+                <Award className="w-12 h-12 text-muted-foreground mx-auto opacity-60" />
+                <h3 className="text-lg font-semibold text-foreground">No Nominees Found</h3>
+                <p className="text-sm text-muted-foreground max-w-sm mx-auto">
+                  {searchQuery || selectedCategory !== "all"
+                    ? "No candidate matches your current filters or search terms."
+                    : "No published nominees are available in this category yet."}
+                </p>
+                {isFiltered && (
+                  <Button type="button" variant="outline" size="sm" onClick={handleResetFilters} className="text-xs gap-1.5">
+                    <ArrowLeft className="w-3.5 h-3.5" /> Back to All Categories
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredAndSortedNominees.map((nominee) => {
                 const categoryObj = categories.find((c) => c.id === nominee.category_id);
                 const rankInfo = categoryRankings[nominee.id];
                 const catRank = rankInfo?.rank ?? 1;
@@ -831,6 +853,7 @@ export default function NomineesPage() {
             </div>
           )}
         </div>
+      )}
       </div>
     </div>
   );
