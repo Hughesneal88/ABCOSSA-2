@@ -43,101 +43,19 @@ export interface UssdSettings {
   instructions: string;
 }
 
-export const DEFAULT_AWARD_CATEGORIES: AwardCategory[] = [
-  {
-    id: "cat-student-of-the-year",
-    title: "Student of the Year",
-    description: "Recognizing outstanding academic excellence, leadership, and community service.",
-    vote_price_ghs: 1.0,
-    is_active: true,
-    display_order: 1,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: "cat-best-researcher",
-    title: "Best Researcher",
-    description: "Honoring exceptional contributions to biological and chemical sciences research.",
-    vote_price_ghs: 1.0,
-    is_active: true,
-    display_order: 2,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: "cat-leadership-excellence",
-    title: "Leadership Excellence",
-    description: "Awarded to student leaders demonstrating exemplary dedication to student welfare.",
-    vote_price_ghs: 1.0,
-    is_active: true,
-    display_order: 3,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: "cat-most-innovative",
-    title: "Most Innovative Project",
-    description: "Celebrating creative scientific solutions and technological innovations.",
-    vote_price_ghs: 1.0,
-    is_active: true,
-    display_order: 4,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: "cat-best-pals",
-    title: "Best Pals",
-    description: "Celebrating cherished friendships and inseparable student partnerships.",
-    vote_price_ghs: 1.0,
-    is_active: true,
-    display_order: 5,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: "cat-blogger-of-the-year",
-    title: "Blogger of the Year",
-    description: "Celebrating student blogs and digital storytellers in the ABCOSSA community.",
-    vote_price_ghs: 1.0,
-    is_active: true,
-    display_order: 6,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: "cat-sports-personality",
-    title: "Sports Personality",
-    description: "Honoring outstanding athletic performance and sporting spirit.",
-    vote_price_ghs: 1.0,
-    is_active: true,
-    display_order: 7,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: "cat-face-of-abcossa",
-    title: "Face of ABCOSSA",
-    description: "Recognizing charismatic brand ambassadors and student role models.",
-    vote_price_ghs: 1.0,
-    is_active: true,
-    display_order: 8,
-    created_at: new Date().toISOString(),
-  },
-];
-
 export function useAwardCategories() {
   return useQuery({
     queryKey: ["award-categories"],
     queryFn: async (): Promise<AwardCategory[]> => {
-      if (!supabase) return DEFAULT_AWARD_CATEGORIES;
+      if (!supabase) return [];
       const { data, error } = await supabase
         .from("award_categories")
         .select("*")
         .eq("is_active", true)
         .order("display_order", { ascending: true });
-      if (error) {
-        console.warn("Failed to fetch award categories from Supabase, using defaults:", error);
-        return DEFAULT_AWARD_CATEGORIES;
-      }
-      if (!data || data.length === 0) {
-        return DEFAULT_AWARD_CATEGORIES;
-      }
-      return (data as AwardCategory[]);
+      if (error) throw error;
+      return (data as AwardCategory[]) ?? [];
     },
-    initialData: DEFAULT_AWARD_CATEGORIES,
     enabled: isSupabaseConfigured,
   });
 }
@@ -366,13 +284,8 @@ export async function ensureDinnerAwardsData() {
     .select("id, title, display_order, vote_price_ghs");
   if (catErr) return false;
 
-  let changed = false;
-
   if (!categories || categories.length === 0) {
-    const toInsert = DEFAULT_AWARD_CATEGORIES.map(({ id, created_at, ...rest }) => rest);
-    const { error: insErr } = await supabase.from("award_categories").insert(toInsert);
-    if (!insErr) changed = true;
-    return changed;
+    return false;
   }
 
   const ninepence = categories.find((c) => /nine\s*pence/i.test(c.title));
@@ -395,6 +308,8 @@ export async function ensureDinnerAwardsData() {
   if (seedRow?.value === "applied" && !ninepence && blogger && hasAllBloggers && aegonNominees.length === 0) {
     return false;
   }
+
+  let changed = false;
 
   for (const n of aegonNominees) {
     const { error } = await supabase.from("nominees").delete().eq("id", n.id);
