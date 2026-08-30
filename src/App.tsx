@@ -23,7 +23,16 @@ const ResearchPage = lazy(() => import("./pages/ResearchPage"));
 const ResourcesPage = lazy(() => import("./pages/ResourcesPage"));
 const NomineesPage = lazy(() => import("./pages/NomineesPage"));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 1000 * 60 * 5, // 5 minutes cache
+      gcTime: 1000 * 60 * 30, // 30 minutes garbage collection
+      refetchOnWindowFocus: false, // Prevents excessive Supabase bandwidth/egress on tab switch
+      retry: 1,
+    },
+  },
+});
 
 // Smooth page skeleton fallback during route transitions
 function PageSkeleton() {
