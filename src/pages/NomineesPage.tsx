@@ -155,21 +155,19 @@ export default function NomineesPage() {
 
   // Category-specific leaderboards summary
   const categoryLeaderboards = useMemo(() => {
-    return categories
-      .map((cat) => {
-        const inCat = nominees.filter((n) => n.category_id === cat.id);
-        const sorted = [...inCat].sort((a, b) => (b.votes_count || 0) - (a.votes_count || 0));
-        const leader = sorted[0];
-        return {
-          category: cat,
-          nominees: sorted,
-          totalNominees: inCat.length,
-          totalVotes: inCat.reduce((sum, n) => sum + (n.votes_count || 0), 0),
-          leader: leader && (leader.votes_count || 0) > 0 ? leader : null,
-          runnerUp: sorted[1] && (sorted[1].votes_count || 0) > 0 ? sorted[1] : null,
-        };
-      })
-      .filter((c) => c.totalNominees > 0);
+    return categories.map((cat) => {
+      const inCat = nominees.filter((n) => n.category_id === cat.id);
+      const sorted = [...inCat].sort((a, b) => (b.votes_count || 0) - (a.votes_count || 0));
+      const leader = sorted[0];
+      return {
+        category: cat,
+        nominees: sorted,
+        totalNominees: inCat.length,
+        totalVotes: inCat.reduce((sum, n) => sum + (n.votes_count || 0), 0),
+        leader: leader && (leader.votes_count || 0) > 0 ? leader : null,
+        runnerUp: sorted[1] && (sorted[1].votes_count || 0) > 0 ? sorted[1] : null,
+      };
+    });
   }, [categories, nominees]);
 
   // Filtered and sorted nominees
