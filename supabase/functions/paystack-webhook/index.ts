@@ -46,10 +46,11 @@ serve(async (req) => {
     const payload = JSON.parse(rawBody);
 
     if (payload.event === "charge.success") {
-      const { reference, id: transactionId, channel } = payload.data || {};
+      const { reference, id: transactionId, channel, metadata } = payload.data || {};
 
       if (reference) {
-        await supabase
+        // 1. Update payment record to paid
+        const { data: updatedPayment } = await supabase
           .from("payments")
           .update({
             status: "paid",
@@ -57,7 +58,28 @@ serve(async (req) => {
             payment_channel: channel || "paystack",
             updated_at: new Date().toISOString(),
           })
-          .eq("client_reference", reference);
+          .eq("client_reference", reference)
+          .select()
+          .maybeSingle();
+
+        // 2. If this was a voting payment, credit the nominee's votes
+        const nomineeId = updatedPayment?.metadata?.nominee_id || metadata?.nominee_id;
+        const votesToAdd = Math.max(1, Number(updatedPayment?.metadata?.votes_count || metadata?.votes_count || 1));
+
+        if (nomineeId) {
+          const { data: nominee } = await supabase
+            .from("nominees")
+            .select("id, votes_count")
+            .eq("id", nomineeId)
+            .maybeSingle();
+
+          if (nominee) {
+            await supabase
+              .from("nominees")
+              .update({ votes_count: (nominee.votes_count || 0) + votesToAdd })
+              .eq("id", nominee.id);
+          }
+        }
       }
     }
 

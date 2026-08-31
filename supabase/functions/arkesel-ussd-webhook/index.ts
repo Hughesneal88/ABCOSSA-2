@@ -80,7 +80,46 @@ async function triggerMoMoPayment(params: {
   const hubtelMerchant = settings["hubtel_merchant_account_number"] || Deno.env.get("HUBTEL_MERCHANT_ACCOUNT_NUMBER") || "2019842";
   const paystackKey = settings["paystack_secret_key"] || Deno.env.get("PAYSTACK_SECRET_KEY") || "";
 
-  // 1. Try Arkesel MoMo API
+  // 1. Prioritize Paystack MoMo Charge API if Paystack secret key is configured
+  if (paystackKey) {
+    try {
+      const provider = network.toLowerCase().includes("mtn")
+        ? "mtn"
+        : network.toLowerCase().includes("telecel") || network.toLowerCase().includes("vod")
+        ? "vod"
+        : "tgo";
+
+      const res = await fetch("https://api.paystack.co/charge", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${paystackKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: Math.round(amount * 100), // Pesewas
+          email: "ussd-voting@abcossa.org",
+          currency: "GHS",
+          reference: reference,
+          mobile_money: {
+            phone: normalized.local,
+            provider: provider,
+          },
+          metadata: {
+            nominee_name: nomineeName,
+            votes_count: votesCount,
+            source: "arkesel_ussd",
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      console.log("Paystack MoMo charge response:", data);
+      return { gateway: "paystack", result: data };
+    } catch (e) {
+      console.warn("Paystack MoMo charge error:", e);
+    }
+  }
+
+  // 2. Fallback to Arkesel MoMo API
   if (arkeselKey) {
     try {
       const res = await fetch("https://api.arkesel.com/api/v2/momo/debit", {
@@ -106,7 +145,7 @@ async function triggerMoMoPayment(params: {
     }
   }
 
-  // 2. Try Hubtel Receive MoMo API
+  // 3. Fallback to Hubtel Receive MoMo API
   if (hubtelClientId && hubtelSecret) {
     try {
       const channel = network.toLowerCase().includes("mtn")
@@ -137,40 +176,6 @@ async function triggerMoMoPayment(params: {
       return { gateway: "hubtel", result: data };
     } catch (e) {
       console.warn("Hubtel MoMo receive error:", e);
-    }
-  }
-
-  // 3. Try Paystack MoMo Charge API
-  if (paystackKey) {
-    try {
-      const provider = network.toLowerCase().includes("mtn")
-        ? "mtn"
-        : network.toLowerCase().includes("telecel") || network.toLowerCase().includes("vod")
-        ? "vod"
-        : "tgo";
-
-      const res = await fetch("https://api.paystack.co/charge", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${paystackKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          amount: Math.round(amount * 100),
-          email: "ussd-voting@abcossa.org",
-          currency: "GHS",
-          reference: reference,
-          mobile_money: {
-            phone: normalized.local,
-            provider: provider,
-          },
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      console.log("Paystack MoMo charge response:", data);
-      return { gateway: "paystack", result: data };
-    } catch (e) {
-      console.warn("Paystack MoMo charge error:", e);
     }
   }
 
