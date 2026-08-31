@@ -387,15 +387,15 @@ export async function syncPaystackTransactionsDirectly(includeTest = false): Pro
   let votesCreditedTotal = 0;
   let testSkippedCount = 0;
 
-  // 4. Process each transaction from Paystack
+  // 4. Process each transaction from Paystack (STRICTLY EXCLUDING TEST TRANSACTIONS)
   for (const p of paystackTransactions) {
     const domain = String(p.domain || "").toLowerCase();
     const gatewayResponse = String(p.gateway_response || "").toLowerCase();
     const ref = String(p.reference || "").trim();
 
-    // If live key is used and user doesn't want test transactions, skip test domain
+    // STRICT CHECK: Skip all test domain transactions
     const isTest = domain === "test" || gatewayResponse.includes("test transaction") || ref.toLowerCase().startsWith("test_");
-    if (isTest && !isTestKey && !includeTest) {
+    if (isTest && !includeTest) {
       testSkippedCount++;
       continue;
     }

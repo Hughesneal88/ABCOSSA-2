@@ -5195,8 +5195,13 @@ function PaymentsAdminPanel() {
   };
 
   const handleSyncAllWithPaystack = () => {
+    if (secretKey.startsWith("sk_test_") || publicKey.startsWith("pk_test_")) {
+      toast.warning(
+        "You are currently using Paystack Test Keys. Paystack will only return Sandbox test data. Please enter your Live Secret Key (sk_live_...) in Settings to fetch your live customer payments."
+      );
+    }
     toast.info("Connecting to Paystack API to match all transactions...");
-    syncAllMutation.mutate(undefined, {
+    syncAllMutation.mutate(false, {
       onSuccess: (res) => {
         toast.success(
           res.message ||
@@ -5324,6 +5329,18 @@ function PaymentsAdminPanel() {
         <p className="text-xs text-muted-foreground">
           Configure your Paystack Ghana API keys to accept instant payments via MTN Mobile Money, Telecel Cash, AT Money, and Visa/Mastercard credit or debit cards.
         </p>
+
+        {isTestMode && (
+          <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-800 dark:text-amber-300 space-y-1">
+            <div className="font-bold flex items-center gap-1.5">
+              ⚠️ Paystack Sandbox / Test Mode Active
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              Your site is currently using Paystack test credentials (<code>sk_test_...</code> / <code>pk_test_...</code>). Paystack only returns sandbox test transactions in this mode.
+              To sync your <strong>real live Mobile Money payments</strong> and see customer transactions, replace these keys with your <strong>Live Secret Key (<code>sk_live_...</code>)</strong> and <strong>Live Public Key (<code>pk_live_...</code>)</strong> from your <a href="https://dashboard.paystack.com/#/settings/developer" target="_blank" rel="noreferrer" className="underline font-semibold">Paystack Dashboard</a>.
+            </p>
+          </div>
+        )}
 
         {loadingSettings ? (
           <div className="py-6 flex items-center gap-2 text-xs text-muted-foreground">
