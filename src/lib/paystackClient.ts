@@ -516,3 +516,238 @@ export async function syncPaystackTransactionsDirectly(includeTest = false): Pro
     message: `Synchronized ${paystackTransactions.length} transactions from Paystack. (${updatedPaidCount} updated to Paid, ${importedCount} imported, ${votesCreditedTotal} votes credited).`,
   };
 }
+
+/**
+ * Simple CSV line parser handling quotes and commas
+ */
+function parseCsvLine(text: string): string[] {
+  const result: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      result.push(cur.trim());
+      cur = "";
+    } else {
+      cur += char;
+    }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+/**
+ * Imports and updates records from a Paystack CSV export file
+ */
+export async function importPaystackCsv(
+  csvText: string,
+  excludeTest = true
+): Promise<{
+  totalRows: number;
+  updatedPaid: number;
+  importedCount: number;
+  failedCount: number;
+  votesCredited: number;
+  testSkipped: number;
+  message: string;
+}> {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) {
+    throw new Error("CSV file is empty or missing headers.");
+  }
+
+  const headerLine = parseCsvLine(lines[0]);
+  const headers = headerLine.map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, ""));
+
+  // Find column indices
+  const getColIdx = (...candidates: string[]) => {
+    for (const c of candidates) {
+      const idx = headers.findIndex((h) => h.includes(c));
+      if (idx !== -1) return idx;
+    }
+    return -1;
+  };
+
+  const refIdx = getColIdx("reference", "ref", "clientref");
+  const statusIdx = getColIdx("status", "paymentstatus", "state");
+  const amountIdx = getColIdx("amount", "total", "value");
+  const emailIdx = getColIdx("customeremail", "email", "customer");
+  const phoneIdx = getColIdx("phone", "customermobile", "msisdn", "customerno");
+  const nameIdx = getColIdx("customername", "name", "fullname", "payer");
+  const channelIdx = getColIdx("channel", "paymentmethod", "gateway");
+  const dateIdx = getColIdx("paidat", "transactiondate", "createdat", "date");
+  const domainIdx = getColIdx("domain", "mode", "environment");
+  const metaIdx = getColIdx("metadata", "customfields", "description", "details");
+
+  if (refIdx === -1) {
+    throw new Error("Could not find a 'Reference' column in the uploaded CSV.");
+  }
+
+  // Fetch local records
+  const { data: localPayments = [], error: fetchErr } = await supabase
+    .from("payments")
+    .select("*");
+
+  if (fetchErr) throw fetchErr;
+
+  const localMap = new Map<string, PaymentRecord>();
+  (localPayments || []).forEach((p: PaymentRecord) => {
+    if (p.client_reference) localMap.set(p.client_reference.toLowerCase().trim(), p);
+    if (p.transaction_id) localMap.set(p.transaction_id.toLowerCase().trim(), p);
+  });
+
+  let updatedPaid = 0;
+  let importedCount = 0;
+  let failedCount = 0;
+  let votesCredited = 0;
+  let testSkipped = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseCsvLine(lines[i]);
+    if (row.length === 0 || !row[refIdx]) continue;
+
+    const ref = row[refIdx].trim();
+    const rawStatus = (statusIdx !== -1 ? row[statusIdx] : "success").toLowerCase().trim();
+    const isSuccess = rawStatus === "success" || rawStatus === "paid" || rawStatus === "completed" || rawStatus === "approved";
+    const normalizedStatus = isSuccess ? "paid" : rawStatus === "abandoned" ? "failed" : rawStatus;
+
+    // Check domain / test
+    const rawDomain = (domainIdx !== -1 ? row[domainIdx] : "").toLowerCase().trim();
+    const isTest = rawDomain === "test" || ref.toLowerCase().startsWith("test_");
+    if (excludeTest && isTest) {
+      testSkipped++;
+      continue;
+    }
+
+    // Parse amount
+    let amount = 0;
+    if (amountIdx !== -1 && row[amountIdx]) {
+      const cleanAmt = row[amountIdx].replace(/[^0-9.]/g, "");
+      amount = parseFloat(cleanAmt) || 0;
+      // If amount appears to be in pesewas (e.g. > 100 with no decimal point in standard GHS ranges)
+      if (amount >= 100 && !row[amountIdx].includes(".")) {
+        // e.g. 500 pesewas = 5 GHS
+        amount = amount / 100;
+      }
+    }
+
+    const email = emailIdx !== -1 && row[emailIdx] ? row[emailIdx] : "customer@abcossa.org";
+    const phone = phoneIdx !== -1 && row[phoneIdx] ? row[phoneIdx] : "";
+    const name = nameIdx !== -1 && row[nameIdx] ? row[nameIdx] : "Paystack Customer";
+    const channel = channelIdx !== -1 && row[channelIdx] ? row[channelIdx] : "mobile_money";
+    const paidAt = dateIdx !== -1 && row[dateIdx] ? row[dateIdx] : new Date().toISOString();
+
+    // Parse metadata if available
+    let meta: Record<string, any> = {};
+    if (metaIdx !== -1 && row[metaIdx]) {
+      try {
+        meta = JSON.parse(row[metaIdx]);
+      } catch (_) {
+        meta = { description: row[metaIdx] };
+      }
+    }
+
+    const nomineeId = meta.nominee_id;
+    const votesCount = Number(meta.votes_count || (amount > 0 ? amount : 1));
+
+    const existing = localMap.get(ref.toLowerCase()) || (meta.transaction_id && localMap.get(String(meta.transaction_id).toLowerCase()));
+
+    if (existing) {
+      const wasPaid = existing.status === "paid";
+      if (existing.status !== normalizedStatus) {
+        await supabase
+          .from("payments")
+          .update({
+            status: normalizedStatus,
+            amount: amount > 0 ? amount : existing.amount,
+            payment_channel: channel || existing.payment_channel,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id);
+
+        if (!wasPaid && isSuccess) {
+          updatedPaid++;
+          const targetNomineeId = existing.metadata?.nominee_id || nomineeId;
+          const targetVotes = Number(existing.metadata?.votes_count || votesCount);
+
+          if (targetNomineeId && targetVotes > 0) {
+            const { data: nominee } = await supabase
+              .from("nominees")
+              .select("id, votes_count")
+              .eq("id", targetNomineeId)
+              .maybeSingle();
+
+            if (nominee) {
+              await supabase
+                .from("nominees")
+                .update({ votes_count: (nominee.votes_count || 0) + targetVotes })
+                .eq("id", targetNomineeId);
+              votesCredited += targetVotes;
+            }
+          }
+        }
+      }
+    } else if (isSuccess) {
+      // Insert new payment from CSV
+      importedCount++;
+      const newRecord = {
+        client_reference: ref,
+        amount: amount > 0 ? amount : 1,
+        currency: "GHS",
+        customer_name: name,
+        customer_email: email,
+        customer_phone: phone,
+        payment_type: meta.payment_type || "voting",
+        status: "paid",
+        payment_channel: channel,
+        description: meta.description || `Imported Paystack Payment ${ref}`,
+        metadata: meta,
+        created_at: paidAt,
+        updated_at: new Date().toISOString(),
+      };
+
+      await supabase.from("payments").insert(newRecord);
+
+      if (nomineeId && votesCount > 0) {
+        const { data: nominee } = await supabase
+          .from("nominees")
+          .select("id, votes_count")
+          .eq("id", nomineeId)
+          .maybeSingle();
+
+        if (nominee) {
+          await supabase
+            .from("nominees")
+            .update({ votes_count: (nominee.votes_count || 0) + votesCount })
+            .eq("id", nomineeId);
+          votesCredited += votesCount;
+        }
+      }
+    } else {
+      failedCount++;
+    }
+  }
+
+  return {
+    totalRows: lines.length - 1,
+    updatedPaid,
+    importedCount,
+    failedCount,
+    votesCredited,
+    testSkipped,
+    message: `Processed ${lines.length - 1} records from Paystack CSV (${updatedPaid} updated to Paid, ${importedCount} imported, ${votesCredited} votes credited, ${testSkipped} test records skipped).`,
+  };
+}

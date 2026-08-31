@@ -61,6 +61,7 @@ import {
   useVerifyPaystackPayment,
   useReconcilePendingPayments,
   useSyncAllPaystack,
+  useImportPaystackCsv,
 } from "@/hooks/usePayments";
 import {
   Dialog,
@@ -5032,6 +5033,9 @@ function PaymentsAdminPanel() {
   const verifyPaymentMutation = useVerifyPaystackPayment();
   const reconcileMutation = useReconcilePendingPayments();
   const syncAllMutation = useSyncAllPaystack();
+  const importCsvMutation = useImportPaystackCsv();
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [publicKey, setPublicKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
@@ -5081,8 +5085,8 @@ function PaymentsAdminPanel() {
     );
   };
 
-  const isTestMode = publicKey.startsWith("pk_test_");
-  const isLiveMode = publicKey.startsWith("pk_live_");
+  const isTestMode = publicKey.startsWith("pk_test_") || secretKey.startsWith("sk_test_");
+  const isLiveMode = publicKey.startsWith("pk_live_") || secretKey.startsWith("sk_live_");
 
   const filteredPayments = useMemo(() => {
     return payments.filter((p) => {
@@ -5212,6 +5216,39 @@ function PaymentsAdminPanel() {
         toast.error(err instanceof Error ? err.message : "Paystack sync failed. Check your Secret Key in settings.");
       },
     });
+  };
+
+  const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target?.result as string;
+      if (!text) {
+        toast.error("Failed to read CSV file content.");
+        return;
+      }
+
+      toast.info("Processing and reconciling Paystack CSV export...");
+      importCsvMutation.mutate(
+        { csvText: text, excludeTest: true },
+        {
+          onSuccess: (res) => {
+            toast.success(
+              res.message ||
+                `Paystack CSV Processed: ${res.totalRows} rows (${res.updatedPaid} marked Paid, ${res.importedCount} imported, ${res.votesCredited} votes credited).`
+            );
+            if (fileInputRef.current) fileInputRef.current.value = "";
+          },
+          onError: (err) => {
+            toast.error(err instanceof Error ? err.message : "Failed to import CSV");
+            if (fileInputRef.current) fileInputRef.current.value = "";
+          },
+        }
+      );
+    };
+    reader.readAsText(file);
   };
 
   const handleReconcilePending = () => {
@@ -5454,6 +5491,33 @@ function PaymentsAdminPanel() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Hidden CSV File Input */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".csv"
+              onChange={handleCsvFileChange}
+              className="hidden"
+            />
+
+            {/* Import Paystack CSV Button */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={importCsvMutation.isPending}
+              onClick={() => fileInputRef.current?.click()}
+              className="text-xs font-semibold gap-1.5 h-8 text-foreground border-border hover:bg-muted"
+              title="Upload a CSV exported from Paystack Dashboard to match and update all transactions"
+            >
+              {importCsvMutation.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Upload className="w-3.5 h-3.5" />
+              )}
+              Import Paystack CSV
+            </Button>
+
             {/* Sync All with Paystack Button */}
             <Button
               type="button"

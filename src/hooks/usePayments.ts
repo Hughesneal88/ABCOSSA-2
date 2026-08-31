@@ -5,6 +5,7 @@ import {
   updatePaymentSuccess,
   updatePaymentStatus,
   syncPaystackTransactionsDirectly,
+  importPaystackCsv,
   type InitiatePaymentParams,
   type PaymentRecord,
 } from "@/lib/paystackClient";
@@ -459,9 +460,25 @@ export function useSyncAllPaystack() {
   });
 }
 
+export function useImportPaystackCsv() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ csvText, excludeTest = true }: { csvText: string; excludeTest?: boolean }) => {
+      return await importPaystackCsv(csvText, excludeTest);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+    },
+  });
+}
+
 // Backward compatibility wrappers
 export const useHubtelSettings = usePaystackSettings;
 export const useUpdateHubtelSettings = useUpdatePaystackSettings;
+
 
 
 
