@@ -212,6 +212,92 @@ export function useUpdateUssdSettings() {
   });
 }
 
+export interface PaymentApiSettings {
+  paystackSecretKey: string;
+  paystackPublicKey: string;
+  arkeselApiKey: string;
+  hubtelClientId: string;
+  hubtelClientSecret: string;
+  hubtelMerchantNumber: string;
+}
+
+export function usePaymentApiSettings() {
+  return useQuery({
+    queryKey: ["payment-api-settings"],
+    queryFn: async (): Promise<PaymentApiSettings> => {
+      if (!supabase) {
+        return {
+          paystackSecretKey: "",
+          paystackPublicKey: "",
+          arkeselApiKey: "",
+          hubtelClientId: "",
+          hubtelClientSecret: "",
+          hubtelMerchantNumber: "2019842",
+        };
+      }
+
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("key, value")
+        .in("key", [
+          "paystack_secret_key",
+          "paystack_public_key",
+          "arkesel_api_key",
+          "hubtel_client_id",
+          "hubtel_client_secret",
+          "hubtel_merchant_account_number",
+        ]);
+
+      if (error) throw error;
+
+      const map = Object.fromEntries(
+        (data as { key: string; value: string }[]).map((r) => [r.key, r.value])
+      );
+
+      return {
+        paystackSecretKey: map["paystack_secret_key"] || "",
+        paystackPublicKey: map["paystack_public_key"] || "",
+        arkeselApiKey: map["arkesel_api_key"] || "",
+        hubtelClientId: map["hubtel_client_id"] || "",
+        hubtelClientSecret: map["hubtel_client_secret"] || "",
+        hubtelMerchantNumber: map["hubtel_merchant_account_number"] || "2019842",
+      };
+    },
+    enabled: isSupabaseConfigured,
+  });
+}
+
+export function useUpdatePaymentApiSettings() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (settings: PaymentApiSettings) => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      const updates = [
+        { key: "paystack_secret_key", value: settings.paystackSecretKey.trim() },
+        { key: "paystack_public_key", value: settings.paystackPublicKey.trim() },
+        { key: "arkesel_api_key", value: settings.arkeselApiKey.trim() },
+        { key: "hubtel_client_id", value: settings.hubtelClientId.trim() },
+        { key: "hubtel_client_secret", value: settings.hubtelClientSecret.trim() },
+        { key: "hubtel_merchant_account_number", value: settings.hubtelMerchantNumber.trim() },
+      ];
+
+      for (const item of updates) {
+        const { error } = await supabase
+          .from("site_settings")
+          .upsert(item, { onConflict: "key" });
+        if (error) throw error;
+      }
+
+      return settings;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payment-api-settings"] });
+    },
+  });
+}
+
 export function useAutoGenerateNomineeCodes() {
   const queryClient = useQueryClient();
 

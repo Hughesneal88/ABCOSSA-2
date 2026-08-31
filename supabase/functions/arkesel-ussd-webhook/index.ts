@@ -34,17 +34,27 @@ function normalizePhone(rawPhone: string) {
     return {
       international: cleaned,
       local: `0${cleaned.slice(3)}`,
+      isValid: true,
     };
   }
   if (cleaned.startsWith("0") && cleaned.length === 10) {
     return {
       international: `233${cleaned.slice(1)}`,
       local: cleaned,
+      isValid: true,
+    };
+  }
+  if (cleaned.length >= 9 && cleaned.length <= 13) {
+    return {
+      international: cleaned.startsWith("233") ? cleaned : `233${cleaned.replace(/^0+/, "")}`,
+      local: cleaned.startsWith("0") ? cleaned : `0${cleaned.replace(/^233/, "")}`,
+      isValid: true,
     };
   }
   return {
     international: cleaned,
     local: cleaned,
+    isValid: false,
   };
 }
 
@@ -81,6 +91,15 @@ async function triggerMoMoPayment(params: {
   const hubtelSecret = settings["hubtel_client_secret"] || Deno.env.get("HUBTEL_CLIENT_SECRET") || "";
   const hubtelMerchant = settings["hubtel_merchant_account_number"] || Deno.env.get("HUBTEL_MERCHANT_ACCOUNT_NUMBER") || "2019842";
 
+  console.log("Trigger MoMo Payment started for:", {
+    phone: normalized.local,
+    amount,
+    network,
+    hasPaystackKey: Boolean(paystackKey),
+    hasArkeselKey: Boolean(arkeselKey),
+    hasHubtelKey: Boolean(hubtelClientId && hubtelSecret),
+  });
+
   // 1. Prioritize Paystack MoMo Charge API if Paystack secret key is configured
   if (paystackKey) {
     try {
@@ -90,33 +109,38 @@ async function triggerMoMoPayment(params: {
         ? "vod"
         : "tgo";
 
+      const chargePayload = {
+        amount: Math.round(amount * 100), // In Ghana Pesewas (e.g. GHS 5.00 = 500)
+        email: "ussd-voting@abcossa.org",
+        currency: "GHS",
+        reference: reference,
+        mobile_money: {
+          phone: normalized.local,
+          provider: provider,
+        },
+        metadata: {
+          nominee_name: nomineeName,
+          votes_count: votesCount,
+          source: "arkesel_ussd",
+        },
+      };
+
+      console.log("Calling Paystack Charge API with payload:", JSON.stringify(chargePayload));
+
       const res = await fetch("https://api.paystack.co/charge", {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${paystackKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          amount: Math.round(amount * 100), // Pesewas
-          email: "ussd-voting@abcossa.org",
-          currency: "GHS",
-          reference: reference,
-          mobile_money: {
-            phone: normalized.local,
-            provider: provider,
-          },
-          metadata: {
-            nominee_name: nomineeName,
-            votes_count: votesCount,
-            source: "arkesel_ussd",
-          },
-        }),
+        body: JSON.stringify(chargePayload),
       });
+
       const data = await res.json().catch(() => ({}));
-      console.log("Paystack MoMo charge response:", data);
-      return { gateway: "paystack", result: data };
+      console.log("Paystack MoMo charge response:", JSON.stringify(data));
+      return { gateway: "paystack", success: Boolean(data.status), result: data };
     } catch (e) {
-      console.warn("Paystack MoMo charge error:", e);
+      console.error("Paystack MoMo charge error:", e);
     }
   }
 
@@ -139,10 +163,10 @@ async function triggerMoMoPayment(params: {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      console.log("Arkesel MoMo debit response:", data);
-      return { gateway: "arkesel", result: data };
+      console.log("Arkesel MoMo debit response:", JSON.stringify(data));
+      return { gateway: "arkesel", success: true, result: data };
     } catch (e) {
-      console.warn("Arkesel MoMo debit error:", e);
+      console.error("Arkesel MoMo debit error:", e);
     }
   }
 
@@ -173,14 +197,15 @@ async function triggerMoMoPayment(params: {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      console.log("Hubtel MoMo receive response:", data);
-      return { gateway: "hubtel", result: data };
+      console.log("Hubtel MoMo receive response:", JSON.stringify(data));
+      return { gateway: "hubtel", success: true, result: data };
     } catch (e) {
-      console.warn("Hubtel MoMo receive error:", e);
+      console.error("Hubtel MoMo receive error:", e);
     }
   }
 
-  return { gateway: "simulated", result: { status: "pending" } };
+  console.warn("No payment gateway API keys configured in site_settings or environment variables!");
+  return { gateway: "unconfigured", success: false, result: { message: "No payment gateway key set" } };
 }
 
 /**
@@ -234,6 +259,7 @@ serve(async (req) => {
       `sess_${Date.now()}`
     ).trim();
 
+    // Dynamically parse user phone from gateway (no hardcoded default!)
     const userId = String(
       payload.userID ||
       payload.userId ||
@@ -242,7 +268,8 @@ serve(async (req) => {
       payload.phoneNumber ||
       payload.phone ||
       payload.Mobile ||
-      "233000000000"
+      payload.sender ||
+      ""
     ).trim();
 
     const rawUserData = String(
@@ -266,11 +293,9 @@ serve(async (req) => {
 
     // Save session helper across Multi-Tier storage
     const saveSession = async (state: UssdSessionState) => {
-      // 1. In-memory
       inMemorySessions.set(sessionId, state);
-      inMemorySessions.set(userId, state);
+      if (userId) inMemorySessions.set(userId, state);
 
-      // 2. ussd_sessions table
       try {
         await supabase.from("ussd_sessions").upsert(
           {
@@ -279,30 +304,27 @@ serve(async (req) => {
           },
           { onConflict: "session_id" }
         );
-      } catch (e) {
-        console.warn("ussd_sessions upsert:", e);
-      }
+      } catch (_) {}
 
-      // 3. Persistent fallback in site_settings (always exists in Supabase!)
       try {
-        await supabase.from("site_settings").upsert(
-          [
-            { key: `ussd_sess_${sessionId}`, value: JSON.stringify(state) },
-            { key: `ussd_user_${userId}`, value: JSON.stringify(state) },
-          ],
-          { onConflict: "key" }
-        );
+        const fallbackItems = [{ key: `ussd_sess_${sessionId}`, value: JSON.stringify(state) }];
+        if (userId) {
+          fallbackItems.push({ key: `ussd_user_${userId}`, value: JSON.stringify(state) });
+        }
+        await supabase.from("site_settings").upsert(fallbackItems, { onConflict: "key" });
       } catch (_) {}
     };
 
     const clearSession = async () => {
       inMemorySessions.delete(sessionId);
-      inMemorySessions.delete(userId);
+      if (userId) inMemorySessions.delete(userId);
       try {
         await supabase.from("ussd_sessions").delete().eq("session_id", sessionId);
       } catch (_) {}
       try {
-        await supabase.from("site_settings").delete().in("key", [`ussd_sess_${sessionId}`, `ussd_user_${userId}`]);
+        const keysToDelete = [`ussd_sess_${sessionId}`];
+        if (userId) keysToDelete.push(`ussd_user_${userId}`);
+        await supabase.from("site_settings").delete().in("key", keysToDelete);
       } catch (_) {}
     };
 
@@ -391,7 +413,7 @@ serve(async (req) => {
       );
 
       const amountPaid = parseFloat(String(payload.amount || payload.total_amount || "0")) || (votesToAdd * votePrice);
-      const customerPhone = userId;
+      const customerPhone = userId || String(payload.phone || payload.customer_phone || "");
       const transactionRef = String(payload.transaction_id || payload.reference || `arkesel_${Date.now()}`).trim();
 
       if (candidateCode) {
@@ -464,14 +486,15 @@ serve(async (req) => {
 
     // Multi-tier session lookup
     let sessionState: UssdSessionState | null =
-      inMemorySessions.get(sessionId) || inMemorySessions.get(userId) || null;
+      inMemorySessions.get(sessionId) || (userId ? inMemorySessions.get(userId) : null) || null;
 
     if (!sessionState) {
       try {
+        const orFilter = userId ? `session_id.eq.${sessionId},user_id.eq.${userId}` : `session_id.eq.${sessionId}`;
         const { data: dbSession } = await supabase
           .from("ussd_sessions")
           .select("*")
-          .or(`session_id.eq.${sessionId},user_id.eq.${userId}`)
+          .or(orFilter)
           .order("updated_at", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -479,24 +502,26 @@ serve(async (req) => {
         if (dbSession) {
           sessionState = dbSession as UssdSessionState;
           inMemorySessions.set(sessionId, sessionState);
-          inMemorySessions.set(userId, sessionState);
+          if (userId) inMemorySessions.set(userId, sessionState);
         }
       } catch (_) {}
     }
 
     if (!sessionState) {
       try {
+        const keysToFetch = [`ussd_sess_${sessionId}`];
+        if (userId) keysToFetch.push(`ussd_user_${userId}`);
         const { data: fallbackRows } = await supabase
           .from("site_settings")
           .select("key, value")
-          .in("key", [`ussd_sess_${sessionId}`, `ussd_user_${userId}`]);
+          .in("key", keysToFetch);
 
         if (fallbackRows && fallbackRows.length > 0) {
           const val = fallbackRows[0].value;
           if (val) {
             sessionState = JSON.parse(val) as UssdSessionState;
             inMemorySessions.set(sessionId, sessionState);
-            inMemorySessions.set(userId, sessionState);
+            if (userId) inMemorySessions.set(userId, sessionState);
           }
         }
       } catch (_) {}
@@ -593,18 +618,16 @@ serve(async (req) => {
     let currentStep = sessionState?.current_step || "MAIN_MENU";
     const userInput = cleanInput;
 
-    // Smart Fallback if session state was lost:
     if (!sessionState || currentStep === "MAIN_MENU") {
       if (userInput === "1") {
-        currentStep = "MAIN_MENU"; // Will process userInput '1' -> ENTER_CODE
+        currentStep = "MAIN_MENU";
       } else if (userInput === "2") {
-        currentStep = "MAIN_MENU"; // Will process userInput '2' -> BROWSE_CATEGORIES
+        currentStep = "MAIN_MENU";
       } else if (userInput === "3") {
-        currentStep = "MAIN_MENU"; // Will process userInput '3' -> INFO
+        currentStep = "MAIN_MENU";
       } else if (userInput === "4") {
-        currentStep = "MAIN_MENU"; // Will process userInput '4' -> STANDINGS
+        currentStep = "MAIN_MENU";
       } else if (/^\d{3,4}$/.test(userInput)) {
-        // Direct candidate code
         currentStep = "ENTER_CODE";
       }
     }
@@ -695,7 +718,7 @@ serve(async (req) => {
         return respondUSSD(
           "ABCOSSA Dinner Awards '26\n\n" +
           `Price: ${formatGHS(votePrice)} per vote\n` +
-          "Networks: MTN, Telecel, AT\n`" +
+          "Networks: MTN, Telecel, AT\n" +
           "Fast Dial: *928*667*Code#\n" +
           "Portal: https://abcossa.org\n\n" +
           "00. Main Menu",
@@ -821,7 +844,7 @@ serve(async (req) => {
     }
 
     // =========================================================================
-    // Step 4: SELECT_NETWORK -> CONFIRM_PHONE
+    // Step 4: SELECT_NETWORK -> Check Phone & Prompt
     // =========================================================================
     if (currentStep === "SELECT_NETWORK") {
       if (userInput === "00") {
@@ -859,18 +882,33 @@ serve(async (req) => {
         );
       }
 
-      const displayPhone = phoneInfo.local || userId;
+      // If gateway provided a valid dialing phone number, ask for confirmation
+      if (phoneInfo.isValid && phoneInfo.local) {
+        return respondUSSD(
+          `Network: ${networkName} MoMo\n\n` +
+          `Pay with this number (${phoneInfo.local})?\n` +
+          `1. Yes, use this number\n` +
+          `2. No, use other wallet\n\n` +
+          `00. Back`,
+          true,
+          {
+            ...(sessionState || {}),
+            current_step: "CONFIRM_PHONE",
+            network: networkName,
+          }
+        );
+      }
 
+      // If NO valid phone detected from gateway, ask voter to type their number
       return respondUSSD(
         `Network: ${networkName} MoMo\n\n` +
-        `Pay with this number (${displayPhone})?\n` +
-        `1. Yes, use this number\n` +
-        `2. No, use other wallet\n\n` +
+        `Enter 10-digit MoMo Number:\n` +
+        `(e.g. 0241234567)\n\n` +
         `00. Back`,
         true,
         {
           ...(sessionState || {}),
-          current_step: "CONFIRM_PHONE",
+          current_step: "ENTER_PHONE",
           network: networkName,
         }
       );
@@ -896,7 +934,7 @@ serve(async (req) => {
       }
 
       if (userInput === "1") {
-        const walletPhone = phoneInfo.local || userId;
+        const walletPhone = phoneInfo.local;
         const voteCount = sessionState?.quantity || 1;
         const totalAmount = voteCount * votePrice;
         const nomineeName = sessionState?.nominee_name || "Nominee";
@@ -954,22 +992,25 @@ serve(async (req) => {
     if (currentStep === "ENTER_PHONE") {
       if (userInput === "00") {
         return respondUSSD(
-          `Pay with this number (${phoneInfo.local})?\n` +
-          `1. Yes, use this number\n` +
-          `2. No, use other wallet\n\n` +
+          `Select Payment Network:\n` +
+          `1. MTN Mobile Money\n` +
+          `2. Telecel Cash\n` +
+          `3. AT Money\n\n` +
           `00. Back`,
           true,
           {
             ...(sessionState || {}),
-            current_step: "CONFIRM_PHONE",
+            current_step: "SELECT_NETWORK",
           }
         );
       }
 
       const inputPhone = userInput.replace(/[^\d]/g, "");
-      if (inputPhone.length < 9 || inputPhone.length > 12) {
+      const normalizedInput = normalizePhone(inputPhone);
+
+      if (!normalizedInput.isValid) {
         return respondUSSD(
-          `Invalid phone number. Please enter a 10-digit MoMo number (e.g. 0241234567):\n\n00. Back`,
+          `Invalid phone number.\n\nPlease enter a 10-digit MoMo number (e.g. 0241234567):\n\n00. Back`,
           true,
           {
             ...(sessionState || {}),
@@ -978,7 +1019,7 @@ serve(async (req) => {
         );
       }
 
-      const walletPhone = inputPhone.startsWith("233") ? `0${inputPhone.slice(3)}` : inputPhone;
+      const walletPhone = normalizedInput.local;
       const voteCount = sessionState?.quantity || 1;
       const totalAmount = voteCount * votePrice;
       const nomineeName = sessionState?.nominee_name || "Nominee";
@@ -1030,11 +1071,11 @@ serve(async (req) => {
         const candidateCode = sessionState?.candidate_code || "";
         const nomineeName = sessionState?.nominee_name || "Nominee";
         const network = sessionState?.network || "MTN";
-        const walletPhone = sessionState?.wallet_phone || phoneInfo.local || userId;
+        const walletPhone = sessionState?.wallet_phone || phoneInfo.local || "";
         const trxRef = `USSD_${Date.now().toString().slice(-8)}`;
 
         // 1. Trigger MoMo Payment API push to subscriber
-        await triggerMoMoPayment({
+        const paymentResult = await triggerMoMoPayment({
           amount: totalAmount,
           phone: walletPhone,
           network: network,
@@ -1076,14 +1117,24 @@ serve(async (req) => {
             network: network,
             wallet_phone: walletPhone,
             session_id: sessionId,
-            gateway: "arkesel",
+            gateway: paymentResult.gateway,
+            payment_result: paymentResult.result,
           },
         });
+
+        if (paymentResult.gateway === "unconfigured") {
+          return respondUSSD(
+            `Vote Recorded (Pending Payment).\n\n` +
+            `Please configure your Paystack Secret Key in Staff Portal Settings to send automated MoMo prompts.\n\n` +
+            `Thank you for supporting ABCOSSA!`,
+            false
+          );
+        }
 
         return respondUSSD(
           `Payment Request Sent!\n\n` +
           `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\n\n` +
-          `Please enter your Mobile Money PIN when prompted to approve the vote.\n\n` +
+          `Please enter your Mobile Money PIN when prompted on your phone to approve the vote.\n\n` +
           `Thank you for supporting ABCOSSA!`,
           false
         );
