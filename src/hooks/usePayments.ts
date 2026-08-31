@@ -420,8 +420,40 @@ export function useReconcilePendingPayments() {
   });
 }
 
+export function useSyncAllPaystack() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (): Promise<{
+      success: boolean;
+      message: string;
+      paystackTotal?: number;
+      matchedCount?: number;
+      importedCount?: number;
+      updatedPaidCount?: number;
+      pendingFailedCount?: number;
+      votesCreditedTotal?: number;
+    }> => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      const { data, error } = await supabase.functions.invoke("paystack-sync", {
+        body: {},
+      });
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+    },
+  });
+}
+
 // Backward compatibility wrappers
 export const useHubtelSettings = usePaystackSettings;
 export const useUpdateHubtelSettings = useUpdatePaystackSettings;
+
 
 

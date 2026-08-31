@@ -60,6 +60,7 @@ import {
   useClearPendingPayments,
   useVerifyPaystackPayment,
   useReconcilePendingPayments,
+  useSyncAllPaystack,
 } from "@/hooks/usePayments";
 import {
   Dialog,
@@ -5030,6 +5031,7 @@ function PaymentsAdminPanel() {
   const clearPendingMutation = useClearPendingPayments();
   const verifyPaymentMutation = useVerifyPaystackPayment();
   const reconcileMutation = useReconcilePendingPayments();
+  const syncAllMutation = useSyncAllPaystack();
 
   const [publicKey, setPublicKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
@@ -5192,6 +5194,21 @@ function PaymentsAdminPanel() {
     });
   };
 
+  const handleSyncAllWithPaystack = () => {
+    toast.info("Connecting to Paystack API to match all transactions...");
+    syncAllMutation.mutate(undefined, {
+      onSuccess: (res) => {
+        toast.success(
+          res.message ||
+            `Synced with Paystack! Processed ${res.paystackTotal || 0} transactions (${res.updatedPaidCount || 0} marked Paid, ${res.importedCount || 0} imported, ${res.votesCreditedTotal || 0} votes credited).`
+        );
+      },
+      onError: (err) => {
+        toast.error(err instanceof Error ? err.message : "Paystack sync failed. Check your Secret Key in settings.");
+      },
+    });
+  };
+
   const handleReconcilePending = () => {
     const pendingList = payments.filter((p) => p.status === "pending");
     if (pendingList.length === 0) {
@@ -5336,7 +5353,7 @@ function PaymentsAdminPanel() {
                   value={secretKey}
                   onChange={(e) => setSecretKey(e.target.value)}
                 />
-                <p className="text-[11px] text-muted-foreground mt-1">Required to trigger automated Mobile Money PIN prompt pushes and verify transactions.</p>
+                <p className="text-[11px] text-muted-foreground mt-1">Required to trigger automated Mobile Money PIN prompt pushes and synchronize transactions.</p>
               </div>
 
               <div>
@@ -5420,7 +5437,25 @@ function PaymentsAdminPanel() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Reconcile with Paystack Button */}
+            {/* Sync All with Paystack Button */}
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              disabled={syncAllMutation.isPending}
+              onClick={handleSyncAllWithPaystack}
+              className="text-xs font-semibold gap-1.5 h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
+              title="Query Paystack API to fetch and match all transactions from your Paystack account"
+            >
+              {syncAllMutation.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Check className="w-3.5 h-3.5" />
+              )}
+              Sync & Match All with Paystack
+            </Button>
+
+            {/* Reconcile Pending with Paystack Button */}
             <Button
               type="button"
               variant="outline"
@@ -5433,9 +5468,9 @@ function PaymentsAdminPanel() {
               {reconcileMutation.isPending ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Check className="w-3.5 h-3.5" />
+                <RotateCcw className="w-3.5 h-3.5" />
               )}
-              Reconcile Pending with Paystack ({pendingCount})
+              Reconcile Pending ({pendingCount})
             </Button>
 
             {selectedIds.size > 0 && (
@@ -5468,7 +5503,7 @@ function PaymentsAdminPanel() {
               {clearPendingMutation.isPending ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <RotateCcw className="w-3.5 h-3.5" />
+                <Trash2 className="w-3.5 h-3.5" />
               )}
               Clear Test Logs ({pendingCount + failedCount})
             </Button>
