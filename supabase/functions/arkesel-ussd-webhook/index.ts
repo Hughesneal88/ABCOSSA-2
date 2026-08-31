@@ -101,13 +101,18 @@ serve(async (req) => {
     ).trim();
 
     // Helper for responding in Arkesel standard USSD format
-    const respondUSSD = (message: string, continueSession = true) => {
+    const respondUSSD = (
+      message: string,
+      continueSession = true,
+      extra: Record<string, unknown> = {}
+    ) => {
       return new Response(
         JSON.stringify({
           sessionID: sessionId,
           userID: userId,
           message: message,
           continueSession: continueSession,
+          ...extra,
         }),
         {
           status: 200,
@@ -133,74 +138,148 @@ serve(async (req) => {
     // =========================================================================
     // A. Check if this is a Payment Callback / Webhook Notification from Arkesel
     // =========================================================================
+    const callbackStatus = String(payload.status || payload.payment_status || "").toLowerCase();
+    const hasTransactionRef = Boolean(payload.transaction_id || payload.reference);
+    const hasVotePaymentContext = Boolean(
+      payload.nominee_code ||
+      payload.candidate_code ||
+      payload.code ||
+      payload.candidate_id ||
+      payload.votes ||
+      payload.number_of_votes ||
+      payload.quantity
+    );
     const isPaymentCallback =
-      payload.action === "payment" ||
       payload.event === "payment.success" ||
-      (payload.status === "success" && (payload.amount || payload.transaction_id)) ||
-      Boolean(payload.nominee_code && payload.votes && !payload.sessionID);
+      ((callbackStatus === "success" || callbackStatus === "paid") && (payload.amount || hasTransactionRef)) ||
+      (hasTransactionRef && hasVotePaymentContext);
 
     if (isPaymentCallback) {
+      const transactionRef = String(payload.transaction_id || payload.reference || `arkesel_${Date.now()}`).trim();
+      const paymentSucceeded = payload.event === "payment.success" || callbackStatus === "success" || callbackStatus === "paid";
+      const { data: existingPayment } = await supabase
+        .from("payments")
+        .select("id, status, amount, customer_phone, metadata")
+        .eq("client_reference", transactionRef)
+        .maybeSingle();
+
+      if (!paymentSucceeded) {
+        if (existingPayment?.id) {
+          await supabase
+            .from("payments")
+            .update({ status: "failed", updated_at: new Date().toISOString() })
+            .eq("id", existingPayment.id);
+        }
+
+        return new Response(
+          JSON.stringify({ status: "failed", message: "Payment was not successful.", reference: transactionRef }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (existingPayment?.status === "paid") {
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            message: "Payment callback already processed.",
+            reference: transactionRef,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const paymentMeta =
+        existingPayment?.metadata && typeof existingPayment.metadata === "object"
+          ? (existingPayment.metadata as Record<string, unknown>)
+          : {};
+
       const candidateCode = String(
         payload.nominee_code ||
         payload.candidate_code ||
         payload.code ||
         payload.candidate_id ||
+        paymentMeta.nominee_code ||
         ""
       ).trim();
 
+      const nomineeId = String(paymentMeta.nominee_id || "").trim();
       const votesToAdd = Math.max(
         1,
-        parseInt(String(payload.votes || payload.number_of_votes || payload.quantity || "1"), 10) || 1
+        parseInt(
+          String(payload.votes || payload.number_of_votes || payload.quantity || paymentMeta.votes_count || "1"),
+          10
+        ) || 1
       );
 
-      const amountPaid = parseFloat(String(payload.amount || payload.total_amount || "0")) || (votesToAdd * votePrice);
-      const customerPhone = userId;
-      const transactionRef = String(payload.transaction_id || payload.reference || `arkesel_${Date.now()}`).trim();
+      const amountPaid =
+        parseFloat(String(payload.amount || payload.total_amount || "0")) ||
+        Number(existingPayment?.amount || votesToAdd * votePrice);
+      const customerPhone = String(payload.phone || payload.msisdn || existingPayment?.customer_phone || userId).trim();
 
-      if (candidateCode) {
-        const { data: nominee } = await supabase
+      let nominee = null;
+      if (nomineeId) {
+        const { data } = await supabase
           .from("nominees")
-          .select("id, name, votes_count, category_id")
+          .select("id, name, votes_count, nominee_code")
+          .eq("id", nomineeId)
+          .maybeSingle();
+        nominee = data;
+      }
+
+      if (!nominee && candidateCode) {
+        const { data } = await supabase
+          .from("nominees")
+          .select("id, name, votes_count, nominee_code")
           .or(`nominee_code.eq.${candidateCode},id.eq.${candidateCode}`)
           .maybeSingle();
-
-        if (nominee) {
-          const newVotes = (nominee.votes_count || 0) + votesToAdd;
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
-
-          await supabase.from("payments").insert({
-            client_reference: transactionRef,
-            transaction_id: transactionRef,
-            amount: amountPaid,
-            currency: "GHS",
-            customer_name: `USSD Voter (${customerPhone})`,
-            customer_email: "ussd-voting@abcossa.org",
-            customer_phone: customerPhone,
-            payment_type: "voting",
-            status: "paid",
-            payment_channel: "ussd-arkesel",
-            description: `Arkesel USSD Vote for ${nominee.name} (${votesToAdd} vote${votesToAdd > 1 ? "s" : ""})`,
-            metadata: {
-              nominee_id: nominee.id,
-              nominee_code: candidateCode,
-              nominee_name: nominee.name,
-              votes_count: votesToAdd,
-              gateway: "arkesel",
-              raw_payload: payload,
-            },
-          });
-
-          return new Response(
-            JSON.stringify({
-              status: "success",
-              message: `Credited ${votesToAdd} vote(s) to ${nominee.name}. Total: ${newVotes}`,
-              nominee_id: nominee.id,
-              total_votes: newVotes,
-            }),
-            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
+        nominee = data;
       }
+
+      if (!nominee) {
+        return new Response(
+          JSON.stringify({ error: "Unable to resolve nominee for payment callback", reference: transactionRef }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const newVotes = (nominee.votes_count || 0) + votesToAdd;
+      await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
+
+      await supabase.from("payments").upsert(
+        {
+          client_reference: transactionRef,
+          transaction_id: transactionRef,
+          amount: amountPaid,
+          currency: "GHS",
+          customer_name: `USSD Voter (${customerPhone})`,
+          customer_email: "ussd-voting@abcossa.org",
+          customer_phone: customerPhone,
+          payment_type: "voting",
+          status: "paid",
+          payment_channel: "ussd-arkesel",
+          description: `Arkesel USSD Vote for ${nominee.name} (${votesToAdd} vote${votesToAdd > 1 ? "s" : ""})`,
+          metadata: {
+            nominee_id: nominee.id,
+            nominee_code: nominee.nominee_code || candidateCode,
+            nominee_name: nominee.name,
+            votes_count: votesToAdd,
+            gateway: "arkesel",
+            raw_payload: payload,
+          },
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "client_reference" }
+      );
+
+      return new Response(
+        JSON.stringify({
+          status: "success",
+          message: `Credited ${votesToAdd} vote(s) to ${nominee.name}. Total: ${newVotes}`,
+          nominee_id: nominee.id,
+          total_votes: newVotes,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // =========================================================================
@@ -305,39 +384,47 @@ serve(async (req) => {
       }
 
       if (confirmInput === "1") {
-        // Record vote in Supabase
-        const newVotes = (nominee.votes_count || 0) + voteCount;
-        await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
-
-        const trxRef = `USSD_${Date.now().toString().slice(-8)}`;
-        await supabase.from("payments").insert({
-          client_reference: trxRef,
-          transaction_id: trxRef,
-          amount: totalAmount,
-          currency: "GHS",
-          customer_name: `USSD Voter (${userId})`,
-          customer_email: "ussd-voting@abcossa.org",
-          customer_phone: userId,
-          payment_type: "voting",
-          status: "paid",
-          payment_channel: "ussd-arkesel",
-          description: `Arkesel USSD Vote for ${nominee.name} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
-          metadata: {
-            nominee_id: nominee.id,
-            nominee_code: candidateCode,
-            nominee_name: nominee.name,
-            votes_count: voteCount,
-            session_id: sessionId,
-            gateway: "arkesel",
+        const trxRef = `ARKUSSD_${sessionId}`;
+        await supabase.from("payments").upsert(
+          {
+            client_reference: trxRef,
+            amount: totalAmount,
+            currency: "GHS",
+            customer_name: `USSD Voter (${userId})`,
+            customer_email: "ussd-voting@abcossa.org",
+            customer_phone: userId,
+            payment_type: "voting",
+            status: "pending",
+            payment_channel: "ussd-arkesel",
+            description: `Arkesel USSD Vote for ${nominee.name} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
+            metadata: {
+              nominee_id: nominee.id,
+              nominee_code: candidateCode,
+              nominee_name: nominee.name,
+              votes_count: voteCount,
+              session_id: sessionId,
+              gateway: "arkesel",
+            },
+            updated_at: new Date().toISOString(),
           },
-        });
+          { onConflict: "client_reference" }
+        );
 
         return respondUSSD(
           `Payment Request Initiated!\n\n` +
           `You requested ${voteCount} vote(s) for ${nominee.name} (${formatGHS(totalAmount)}).\n\n` +
           `Please authorize the Mobile Money PIN prompt on your phone.\n\n` +
           `Thank you for supporting ABCOSSA!`,
-          false
+          false,
+          {
+            action: "payment",
+            amount: totalAmount,
+            currency: "GHS",
+            reference: trxRef,
+            callback_url: req.url,
+            nominee_code: candidateCode,
+            votes: voteCount,
+          }
         );
       } else {
         return respondUSSD(`Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.`, false);
@@ -518,45 +605,47 @@ serve(async (req) => {
       }
 
       if (confirmInput === "1") {
-        // Record vote in Supabase
-        const { data: currentNom } = await supabase
-          .from("nominees")
-          .select("votes_count")
-          .eq("id", selectedNom.id)
-          .maybeSingle();
-
-        const newVotes = (currentNom?.votes_count || 0) + voteCount;
-        await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", selectedNom.id);
-
-        const trxRef = `USSD_${Date.now().toString().slice(-8)}`;
-        await supabase.from("payments").insert({
-          client_reference: trxRef,
-          transaction_id: trxRef,
-          amount: totalAmount,
-          currency: "GHS",
-          customer_name: `USSD Voter (${userId})`,
-          customer_email: "ussd-voting@abcossa.org",
-          customer_phone: userId,
-          payment_type: "voting",
-          status: "paid",
-          payment_channel: "ussd-arkesel",
-          description: `Arkesel USSD Vote for ${selectedNom.name} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
-          metadata: {
-            nominee_id: selectedNom.id,
-            nominee_code: selectedNom.nominee_code,
-            nominee_name: selectedNom.name,
-            votes_count: voteCount,
-            session_id: sessionId,
-            gateway: "arkesel",
+        const trxRef = `ARKUSSD_${sessionId}`;
+        await supabase.from("payments").upsert(
+          {
+            client_reference: trxRef,
+            amount: totalAmount,
+            currency: "GHS",
+            customer_name: `USSD Voter (${userId})`,
+            customer_email: "ussd-voting@abcossa.org",
+            customer_phone: userId,
+            payment_type: "voting",
+            status: "pending",
+            payment_channel: "ussd-arkesel",
+            description: `Arkesel USSD Vote for ${selectedNom.name} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
+            metadata: {
+              nominee_id: selectedNom.id,
+              nominee_code: selectedNom.nominee_code,
+              nominee_name: selectedNom.name,
+              votes_count: voteCount,
+              session_id: sessionId,
+              gateway: "arkesel",
+            },
+            updated_at: new Date().toISOString(),
           },
-        });
+          { onConflict: "client_reference" }
+        );
 
         return respondUSSD(
           `Payment Request Initiated!\n\n` +
           `You requested ${voteCount} vote(s) for ${selectedNom.name} (${formatGHS(totalAmount)}).\n\n` +
           `Please authorize the Mobile Money PIN prompt on your phone.\n\n` +
           `Thank you for voting!`,
-          false
+          false,
+          {
+            action: "payment",
+            amount: totalAmount,
+            currency: "GHS",
+            reference: trxRef,
+            callback_url: req.url,
+            nominee_code: selectedNom.nominee_code,
+            votes: voteCount,
+          }
         );
       } else {
         return respondUSSD(`Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.`, false);
