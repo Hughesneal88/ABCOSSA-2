@@ -7,14 +7,32 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
+interface UssdSessionState {
+  session_id: string;
+  user_id: string;
+  current_step: string;
+  candidate_code?: string | null;
+  nominee_id?: string | null;
+  nominee_name?: string | null;
+  category_id?: string | null;
+  category_title?: string | null;
+  category_page: number;
+  nominee_page: number;
+  quantity: number;
+  metadata?: Record<string, any>;
+}
+
+// In-memory fallback cache in case ussd_sessions table is momentarily unreachable
+const inMemorySessions = new Map<string, UssdSessionState>();
+
 /**
- * Arkesel USSD Gateway Interactive Engine & Webhook Handler
- * 
- * Supports:
- * 1. Arkesel USSD Interactive Sessions (JSON & Form-Encoded, GET & POST)
+ * Arkesel USSD Gateway Interactive Engine & Stateful Webhook Handler
+ *
+ * Handles:
+ * 1. Step-by-Step Interactive Sessions (Arkesel sends single-turn input in each HTTP request)
  * 2. Express Dialing (e.g. *928*667*101# or *928*667*101*5#)
- * 3. Step-by-step Interactive Menus (Categories -> Nominees -> Quantity -> Confirm)
- * 4. Arkesel Mobile Money Payment Callbacks
+ * 3. Dynamic Category & Nominee Directory Browsing with Pagination (99. Next, 88. Prev, 00. Back)
+ * 4. Automatic Mobile Money Payment Triggering & Webhook Callbacks
  */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -54,7 +72,7 @@ serve(async (req) => {
       }
     }
 
-    console.log("Arkesel USSD webhook received payload:", JSON.stringify(payload));
+    console.log("Arkesel USSD received payload:", JSON.stringify(payload));
 
     // Normalize incoming session fields across Arkesel / Ghana USSD gateway dialects
     const sessionId = String(
@@ -93,15 +111,48 @@ serve(async (req) => {
       "Response"
     ).trim();
 
-    const serviceCode = String(
-      payload.serviceCode ||
-      payload.service_code ||
-      payload.ServiceCode ||
-      "*928*667#"
-    ).trim();
-
     // Helper for responding in Arkesel standard USSD format
-    const respondUSSD = (message: string, continueSession = true) => {
+    const respondUSSD = async (message: string, continueSession = true, nextState?: Partial<UssdSessionState>) => {
+      // If nextState is provided, update the session in Supabase & memory
+      if (nextState) {
+        const updatedState: UssdSessionState = {
+          session_id: sessionId,
+          user_id: userId,
+          current_step: nextState.current_step || "MAIN_MENU",
+          candidate_code: nextState.candidate_code ?? null,
+          nominee_id: nextState.nominee_id ?? null,
+          nominee_name: nextState.nominee_name ?? null,
+          category_id: nextState.category_id ?? null,
+          category_title: nextState.category_title ?? null,
+          category_page: nextState.category_page ?? 1,
+          nominee_page: nextState.nominee_page ?? 1,
+          quantity: nextState.quantity ?? 1,
+          metadata: nextState.metadata ?? {},
+        };
+
+        inMemorySessions.set(sessionId, updatedState);
+
+        try {
+          await supabase.from("ussd_sessions").upsert(
+            {
+              ...updatedState,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "session_id" }
+          );
+        } catch (e) {
+          console.warn("Could not upsert ussd_session:", e);
+        }
+      }
+
+      // If session is closing (continueSession: false), clean up state
+      if (!continueSession) {
+        inMemorySessions.delete(sessionId);
+        try {
+          await supabase.from("ussd_sessions").delete().eq("session_id", sessionId);
+        } catch (_) {}
+      }
+
       return new Response(
         JSON.stringify({
           sessionID: sessionId,
@@ -131,7 +182,7 @@ serve(async (req) => {
     const votePrice = priceRow?.value ? parseFloat(priceRow.value) : 1.0;
 
     // =========================================================================
-    // A. Check if this is a Payment Callback / Webhook Notification from Arkesel
+    // A. Payment Callback / Webhook Notification from Arkesel
     // =========================================================================
     const isPaymentCallback =
       payload.action === "payment" ||
@@ -204,110 +255,419 @@ serve(async (req) => {
     }
 
     // =========================================================================
-    // B. Interactive USSD Session Flow
+    // B. Interactive USSD Session Flow & State Machine
     // =========================================================================
-    
-    // Clean raw user input string (remove shortcodes and leading/trailing asterisks)
+
+    // If user hung up or timed out
+    if (sessionType.toLowerCase() === "release" || sessionType.toLowerCase() === "timeout") {
+      inMemorySessions.delete(sessionId);
+      try {
+        await supabase.from("ussd_sessions").delete().eq("session_id", sessionId);
+      } catch (_) {}
+      return respondUSSD("Session ended", false);
+    }
+
+    // Clean user input
     let cleanInput = rawUserData;
     if (cleanInput.startsWith("*928*667*")) {
       cleanInput = cleanInput.replace(/^\*928\*667\*/, "").replace(/#$/, "");
-    } else if (cleanInput.startsWith("*928*667#") || cleanInput === "*928*667" || cleanInput === "*920*667#" || cleanInput === "*920*22#") {
+    } else if (
+      cleanInput.startsWith("*928*667#") ||
+      cleanInput === "*928*667" ||
+      cleanInput === "*920*667#" ||
+      cleanInput === "*920*22#"
+    ) {
       cleanInput = "";
     }
 
-    // Split sequential user path inputs (e.g. "1*101*5" or "101*5" or "101")
-    const steps = cleanInput ? cleanInput.split("*").map((s) => s.trim()).filter(Boolean) : [];
+    // Load active session state from database / memory
+    let sessionState: UssdSessionState | null = inMemorySessions.get(sessionId) || null;
+    if (!sessionState) {
+      try {
+        const { data: dbSession } = await supabase
+          .from("ussd_sessions")
+          .select("*")
+          .eq("session_id", sessionId)
+          .maybeSingle();
 
-    // STEP 0: Initial Dial / Main Menu
-    if (sessionType.toLowerCase() === "initiation" || steps.length === 0) {
-      const menu = 
-        `Welcome to ABCOSSA Dinner Awards '26\n` +
-        `Celebrating Excellence\n\n` +
-        `1. Vote with Candidate Code\n` +
-        `2. Browse Award Categories\n` +
-        `3. View Pricing & Info\n` +
-        `4. Check Live Standings`;
-      return respondUSSD(menu, true);
+        if (dbSession) {
+          sessionState = dbSession as UssdSessionState;
+          inMemorySessions.set(sessionId, sessionState);
+        }
+      } catch (_) {}
     }
 
-    // Direct / Express candidate dial check: if user entered candidate code directly (e.g. "101" or "101*5")
-    const firstInput = steps[0];
+    // Default main menu text
+    const renderMainMenu = async () => {
+      const menuText =
+        "Welcome to ABCOSSA Dinner Awards '26\n" +
+        "Celebrating Excellence\n\n" +
+        "1. Vote with Candidate Code\n" +
+        "2. Browse Award Categories\n" +
+        "3. View Pricing & Info\n" +
+        "4. Check Live Standings";
 
-    // Branch 1: User chose "1" (Vote with Code) OR entered a 3-digit candidate code directly (e.g. "101")
-    if (firstInput === "1" || /^\d{3,4}$/.test(firstInput)) {
-      const isDirectCode = /^\d{3,4}$/.test(firstInput);
-      const candidateCode = isDirectCode ? firstInput : steps[1];
+      return respondUSSD(menuText, true, {
+        current_step: "MAIN_MENU",
+        candidate_code: null,
+        nominee_id: null,
+        nominee_name: null,
+        quantity: 1,
+      });
+    };
 
-      // If user selected option "1" from main menu but hasn't typed code yet
-      if (!candidateCode) {
+    // -------------------------------------------------------------------------
+    // Shortcut / Fast-Dial Check (e.g. *928*667*101# or *928*667*101*5#)
+    // -------------------------------------------------------------------------
+    if (cleanInput.includes("*")) {
+      const parts = cleanInput.split("*").map((s) => s.trim()).filter(Boolean);
+      // Fast candidate code
+      const candidateCode = parts[0] === "1" ? parts[1] : parts[0];
+      const qtyStr = parts[0] === "1" ? parts[2] : parts[1];
+
+      if (candidateCode) {
+        const { data: nominee } = await supabase
+          .from("nominees")
+          .select("id, name, nominee_code, category_id, votes_count")
+          .eq("nominee_code", candidateCode)
+          .maybeSingle();
+
+        if (nominee) {
+          if (!qtyStr) {
+            // Prompt for votes
+            return respondUSSD(
+              `Nominee: ${nominee.name}\n` +
+              `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+              `Enter number of votes to cast:\n` +
+              `(e.g. 1, 5, 10, 20...)\n\n` +
+              `00. Back`,
+              true,
+              {
+                current_step: "ENTER_VOTES",
+                candidate_code: nominee.nominee_code,
+                nominee_id: nominee.id,
+                nominee_name: nominee.name,
+              }
+            );
+          } else {
+            // Quantity provided in fast-dial -> prompt confirmation
+            const voteCount = Math.max(1, parseInt(qtyStr, 10) || 1);
+            const totalAmount = voteCount * votePrice;
+
+            return respondUSSD(
+              `Confirm Vote for:\n` +
+              `• ${nominee.name} (#${candidateCode})\n` +
+              `• Quantity: ${voteCount} Vote${voteCount > 1 ? "s" : ""}\n` +
+              `• Total Amount: ${formatGHS(totalAmount)}\n\n` +
+              `1. Confirm & Pay via MoMo\n` +
+              `2. Cancel\n\n` +
+              `00. Back`,
+              true,
+              {
+                current_step: "CONFIRM_VOTE",
+                candidate_code: nominee.nominee_code,
+                nominee_id: nominee.id,
+                nominee_name: nominee.name,
+                quantity: voteCount,
+              }
+            );
+          }
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Step 0: Session Initiation (First dial into *928*667#)
+    // -------------------------------------------------------------------------
+    if (sessionType.toLowerCase() === "initiation" || !cleanInput || !sessionState) {
+      // If user directly entered a 3-digit candidate code on first dial
+      if (/^\d{3,4}$/.test(cleanInput)) {
+        const { data: nominee } = await supabase
+          .from("nominees")
+          .select("id, name, nominee_code, category_id, votes_count")
+          .eq("nominee_code", cleanInput)
+          .maybeSingle();
+
+        if (nominee) {
+          return respondUSSD(
+            `Nominee: ${nominee.name}\n` +
+            `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+            `Enter number of votes to cast:\n` +
+            `(e.g. 1, 5, 10, 20...)\n\n` +
+            `00. Back`,
+            true,
+            {
+              current_step: "ENTER_VOTES",
+              candidate_code: nominee.nominee_code,
+              nominee_id: nominee.id,
+              nominee_name: nominee.name,
+            }
+          );
+        }
+      }
+
+      return renderMainMenu();
+    }
+
+    const currentStep = sessionState.current_step;
+    const userInput = cleanInput;
+
+    // Global back to main menu
+    if (userInput === "00" && (currentStep === "ENTER_CODE" || currentStep === "BROWSE_CATEGORIES" || currentStep === "INFO" || currentStep === "STANDINGS")) {
+      return renderMainMenu();
+    }
+
+    // =========================================================================
+    // Step 1: MAIN_MENU Selection
+    // =========================================================================
+    if (currentStep === "MAIN_MENU") {
+      if (userInput === "1") {
         return respondUSSD(
-          `Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103...)\n\n00. Back to Main Menu`,
-          true
+          "Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103...)\n\n00. Back to Main Menu",
+          true,
+          {
+            ...sessionState,
+            current_step: "ENTER_CODE",
+          }
         );
       }
 
-      // If user typed '00' -> return to main menu
-      if (candidateCode === "00") {
+      if (/^\d{3,4}$/.test(userInput)) {
+        // Direct candidate code from menu
+        const { data: nominee } = await supabase
+          .from("nominees")
+          .select("id, name, nominee_code, category_id, votes_count")
+          .eq("nominee_code", userInput)
+          .maybeSingle();
+
+        if (nominee) {
+          return respondUSSD(
+            `Nominee: ${nominee.name}\n` +
+            `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+            `Enter number of votes to cast:\n` +
+            `(e.g. 1, 5, 10, 20...)\n\n` +
+            `00. Back`,
+            true,
+            {
+              ...sessionState,
+              current_step: "ENTER_VOTES",
+              candidate_code: nominee.nominee_code,
+              nominee_id: nominee.id,
+              nominee_name: nominee.name,
+            }
+          );
+        } else {
+          return respondUSSD(
+            `Candidate Code "${userInput}" was not found.\n\nPlease enter a valid 3-digit code:\n\n00. Back`,
+            true,
+            {
+              ...sessionState,
+              current_step: "ENTER_CODE",
+            }
+          );
+        }
+      }
+
+      if (userInput === "2") {
+        // Browse Categories (Page 1)
+        const { data: allCategories = [] } = await supabase
+          .from("award_categories")
+          .select("id, title, display_order")
+          .eq("is_active", true)
+          .order("display_order", { ascending: true });
+
+        const categories = allCategories || [];
+        const catPageSize = 4;
+        const totalCatPages = Math.max(1, Math.ceil(categories.length / catPageSize));
+        const pageCats = categories.slice(0, catPageSize);
+
+        let catMenu = `Select Category (1/${totalCatPages}):\n`;
+        pageCats.forEach((c, idx) => {
+          catMenu += `${idx + 1}. ${c.title}\n`;
+        });
+        catMenu += "\n";
+        if (totalCatPages > 1) catMenu += "99. Next Page >>\n";
+        catMenu += "00. Main Menu";
+
+        return respondUSSD(catMenu.trim(), true, {
+          ...sessionState,
+          current_step: "BROWSE_CATEGORIES",
+          category_page: 1,
+        });
+      }
+
+      if (userInput === "3") {
+        // Pricing & Info
         return respondUSSD(
-          `Welcome to ABCOSSA Dinner Awards '26\n\n1. Vote with Candidate Code\n2. Browse Award Categories\n3. View Pricing & Info\n4. Check Live Standings`,
-          true
+          "ABCOSSA Dinner Awards '26\n\n" +
+          `• Rate: ${formatGHS(votePrice)} per vote\n` +
+          "• Networks: MTN, Telecel, AT\n" +
+          "• Fast Dial: *928*667*Code#\n" +
+          "• Portal: https://abcossa.org\n\n" +
+          "00. Main Menu",
+          true,
+          {
+            ...sessionState,
+            current_step: "INFO",
+          }
         );
       }
 
-      // Lookup nominee in Supabase
+      if (userInput === "4") {
+        // Top 4 Standings
+        const { data: topNominees = [] } = await supabase
+          .from("nominees")
+          .select("name, votes_count, nominee_code")
+          .eq("is_published", true)
+          .order("votes_count", { ascending: false })
+          .limit(4);
+
+        let standingsText = "Live Awards Standings:\n\n";
+        topNominees.forEach((n, idx) => {
+          standingsText += `${idx + 1}. ${n.name} (#${n.nominee_code}) - ${n.votes_count} votes\n`;
+        });
+        standingsText += "\n00. Main Menu";
+
+        return respondUSSD(standingsText.trim(), true, {
+          ...sessionState,
+          current_step: "STANDINGS",
+        });
+      }
+
+      // Default invalid input on main menu
+      return renderMainMenu();
+    }
+
+    // =========================================================================
+    // Step 2: ENTER_CODE (User is typing candidate code)
+    // =========================================================================
+    if (currentStep === "ENTER_CODE") {
+      if (userInput === "00") {
+        return renderMainMenu();
+      }
+
+      const candidateCode = userInput;
       const { data: nominee, error: findErr } = await supabase
         .from("nominees")
-        .select("id, name, nominee_code, votes_count, category_id")
+        .select("id, name, nominee_code, category_id, votes_count")
         .eq("nominee_code", candidateCode)
         .maybeSingle();
 
       if (findErr || !nominee) {
         return respondUSSD(
-          `Candidate Code "${candidateCode}" was not found.\n\nPlease check the code and try again.\n\n00. Main Menu`,
-          true
+          `Candidate Code "${candidateCode}" not found.\n\nPlease check the code and try again (e.g. 101, 102...):\n\n00. Main Menu`,
+          true,
+          {
+            ...sessionState,
+            current_step: "ENTER_CODE",
+          }
         );
       }
 
-      // Sub-step: Nominee found, check if vote quantity is supplied
-      const quantityInput = isDirectCode ? steps[1] : steps[2];
+      // Nominee found -> Prompt for number of votes
+      return respondUSSD(
+        `Nominee: ${nominee.name}\n` +
+        `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+        `Enter number of votes to cast:\n` +
+        `(e.g. 1, 5, 10, 20...)\n\n` +
+        `00. Back`,
+        true,
+        {
+          ...sessionState,
+          current_step: "ENTER_VOTES",
+          candidate_code: nominee.nominee_code,
+          nominee_id: nominee.id,
+          nominee_name: nominee.name,
+        }
+      );
+    }
 
-      if (!quantityInput) {
+    // =========================================================================
+    // Step 3: ENTER_VOTES (User is typing number of votes)
+    // =========================================================================
+    if (currentStep === "ENTER_VOTES") {
+      if (userInput === "00") {
         return respondUSSD(
-          `Nominee: ${nominee.name}\n` +
+          "Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103...)\n\n00. Back to Main Menu",
+          true,
+          {
+            ...sessionState,
+            current_step: "ENTER_CODE",
+          }
+        );
+      }
+
+      const voteCount = parseInt(userInput, 10);
+      if (isNaN(voteCount) || voteCount < 1) {
+        return respondUSSD(
+          "Please enter a valid number of votes (e.g. 1, 5, 10):\n\n00. Back",
+          true,
+          {
+            ...sessionState,
+            current_step: "ENTER_VOTES",
+          }
+        );
+      }
+
+      const totalAmount = voteCount * votePrice;
+      const nomineeName = sessionState.nominee_name || "Selected Candidate";
+      const code = sessionState.candidate_code || "";
+
+      // Move to Confirmation step
+      return respondUSSD(
+        `Confirm Vote for:\n` +
+        `• ${nomineeName} (#${code})\n` +
+        `• Quantity: ${voteCount} Vote${voteCount > 1 ? "s" : ""}\n` +
+        `• Total Amount: ${formatGHS(totalAmount)}\n\n` +
+        `1. Confirm & Pay via MoMo\n` +
+        `2. Cancel\n\n` +
+        `00. Back`,
+        true,
+        {
+          ...sessionState,
+          current_step: "CONFIRM_VOTE",
+          quantity: voteCount,
+        }
+      );
+    }
+
+    // =========================================================================
+    // Step 4: CONFIRM_VOTE (User confirms payment)
+    // =========================================================================
+    if (currentStep === "CONFIRM_VOTE") {
+      if (userInput === "00") {
+        return respondUSSD(
+          `Nominee: ${sessionState.nominee_name}\n` +
           `Rate: ${formatGHS(votePrice)} / vote\n\n` +
           `Enter number of votes to cast:\n` +
           `(e.g. 1, 5, 10, 20...)\n\n` +
           `00. Back`,
-          true
+          true,
+          {
+            ...sessionState,
+            current_step: "ENTER_VOTES",
+          }
         );
       }
 
-      if (quantityInput === "00") {
-        return respondUSSD(`Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103...)`, true);
-      }
+      if (userInput === "1") {
+        const voteCount = sessionState.quantity || 1;
+        const totalAmount = voteCount * votePrice;
+        const nomineeId = sessionState.nominee_id;
+        const candidateCode = sessionState.candidate_code || "";
+        const nomineeName = sessionState.nominee_name || "Nominee";
 
-      const voteCount = Math.max(1, parseInt(quantityInput, 10) || 1);
-      const totalAmount = voteCount * votePrice;
+        // Record votes & payment
+        if (nomineeId) {
+          const { data: nomRow } = await supabase
+            .from("nominees")
+            .select("votes_count")
+            .eq("id", nomineeId)
+            .maybeSingle();
 
-      // Sub-step: Confirmation
-      const confirmInput = isDirectCode ? steps[2] : steps[3];
-      if (!confirmInput) {
-        return respondUSSD(
-          `Confirm Vote for:\n` +
-          `• ${nominee.name} (#${candidateCode})\n` +
-          `• Quantity: ${voteCount} Vote${voteCount > 1 ? "s" : ""}\n` +
-          `• Total: ${formatGHS(totalAmount)}\n\n` +
-          `1. Confirm & Pay via MoMo\n` +
-          `2. Cancel\n\n` +
-          `00. Back`,
-          true
-        );
-      }
-
-      if (confirmInput === "1") {
-        // Record vote in Supabase
-        const newVotes = (nominee.votes_count || 0) + voteCount;
-        await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
+          const newVotes = (nomRow?.votes_count || 0) + voteCount;
+          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+        }
 
         const trxRef = `USSD_${Date.now().toString().slice(-8)}`;
         await supabase.from("payments").insert({
@@ -321,11 +681,11 @@ serve(async (req) => {
           payment_type: "voting",
           status: "paid",
           payment_channel: "ussd-arkesel",
-          description: `Arkesel USSD Vote for ${nominee.name} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
+          description: `Arkesel USSD Vote for ${nomineeName} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
           metadata: {
-            nominee_id: nominee.id,
+            nominee_id: nomineeId,
             nominee_code: candidateCode,
-            nominee_name: nominee.name,
+            nominee_name: nomineeName,
             votes_count: voteCount,
             session_id: sessionId,
             gateway: "arkesel",
@@ -333,280 +693,219 @@ serve(async (req) => {
         });
 
         return respondUSSD(
-          `Payment Request Initiated!\n\n` +
-          `You requested ${voteCount} vote(s) for ${nominee.name} (${formatGHS(totalAmount)}).\n\n` +
+          `Payment Request Sent!\n\n` +
+          `You requested ${voteCount} vote(s) for ${nomineeName} (${formatGHS(totalAmount)}).\n\n` +
           `Please authorize the Mobile Money PIN prompt on your phone.\n\n` +
           `Thank you for supporting ABCOSSA!`,
           false
         );
       } else {
-        return respondUSSD(`Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.`, false);
+        return respondUSSD("Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.", false);
       }
     }
 
-    // Branch 2: Browse Award Categories (with Dynamic Pagination)
-    if (firstInput === "2") {
-      // Fetch all active categories
+    // =========================================================================
+    // Step 5: BROWSE_CATEGORIES (Directory Browsing)
+    // =========================================================================
+    if (currentStep === "BROWSE_CATEGORIES") {
+      if (userInput === "00") {
+        return renderMainMenu();
+      }
+
       const { data: allCategories = [] } = await supabase
         .from("award_categories")
         .select("id, title, display_order")
+        .eq("is_active", true)
         .order("display_order", { ascending: true });
 
       const categories = allCategories || [];
       const catPageSize = 4;
       const totalCatPages = Math.max(1, Math.ceil(categories.length / catPageSize));
+      let currentCatPage = sessionState.category_page || 1;
 
-      // Parse navigational steps in category browsing
-      // e.g. steps: ["2"], ["2", "99"], ["2", "99", "99"], ["2", "99", "5"], ["2", "5", "1", "10", "1"]
-      let currentCatPage = 1;
-      let selectedCatIndex: number | null = null;
-      let subStepIndex = 1;
+      if (userInput === "99") {
+        currentCatPage = Math.min(totalCatPages, currentCatPage + 1);
+      } else if (userInput === "88") {
+        currentCatPage = Math.max(1, currentCatPage - 1);
+      } else {
+        const selectedNum = parseInt(userInput, 10);
+        const startIdx = (currentCatPage - 1) * catPageSize;
+        const selectedCat = categories[startIdx + (selectedNum - 1)] || categories[selectedNum - 1];
 
-      for (let i = 1; i < steps.length; i++) {
-        const val = steps[i];
-        if (val === "00") {
-          return respondUSSD(
-            `Welcome to ABCOSSA Dinner Awards '26\n\n1. Vote with Candidate Code\n2. Browse Award Categories\n3. View Pricing & Info\n4. Check Live Standings`,
-            true
-          );
-        } else if (val === "99") {
-          currentCatPage = Math.min(totalCatPages, currentCatPage + 1);
-        } else if (val === "88") {
-          currentCatPage = Math.max(1, currentCatPage - 1);
-        } else {
-          const num = parseInt(val, 10);
-          if (!isNaN(num) && num >= 1 && num <= categories.length) {
-            selectedCatIndex = num - 1;
-            subStepIndex = i + 1;
-            break;
+        if (selectedCat) {
+          // Selected a valid category -> Fetch its nominees (Page 1)
+          const { data: allNominees = [] } = await supabase
+            .from("nominees")
+            .select("id, name, nominee_code")
+            .eq("category_id", selectedCat.id)
+            .eq("is_published", true)
+            .order("nominee_code", { ascending: true });
+
+          const catNominees = allNominees || [];
+          const nomPageSize = 4;
+          const totalNomPages = Math.max(1, Math.ceil(catNominees.length / nomPageSize));
+
+          if (catNominees.length === 0) {
+            return respondUSSD(
+              `No nominees currently registered in "${selectedCat.title}".\n\n00. Back to Categories`,
+              true,
+              {
+                ...sessionState,
+                current_step: "BROWSE_CATEGORIES",
+              }
+            );
           }
+
+          const pageNominees = catNominees.slice(0, nomPageSize);
+          let nomMenu = `${selectedCat.title} (1/${totalNomPages}):\n`;
+          pageNominees.forEach((n, idx) => {
+            nomMenu += `${idx + 1}. ${n.name} (#${n.nominee_code})\n`;
+          });
+          nomMenu += "\n";
+          if (totalNomPages > 1) nomMenu += "99. Next Page >>\n";
+          nomMenu += "00. Back to Categories";
+
+          return respondUSSD(nomMenu.trim(), true, {
+            ...sessionState,
+            current_step: "BROWSE_NOMINEES",
+            category_id: selectedCat.id,
+            category_title: selectedCat.title,
+            nominee_page: 1,
+          });
         }
       }
 
-      // If user hasn't selected a specific category yet, render the category page
-      if (selectedCatIndex === null) {
+      // Re-render categories page after 99 / 88 navigation
+      const startIdx = (currentCatPage - 1) * catPageSize;
+      const pageCats = categories.slice(startIdx, startIdx + catPageSize);
+
+      let catMenu = `Select Category (${currentCatPage}/${totalCatPages}):\n`;
+      pageCats.forEach((c, idx) => {
+        catMenu += `${idx + 1}. ${c.title}\n`;
+      });
+      catMenu += "\n";
+      if (currentCatPage < totalCatPages) catMenu += "99. Next Page >>\n";
+      if (currentCatPage > 1) catMenu += "88. << Prev Page\n";
+      catMenu += "00. Main Menu";
+
+      return respondUSSD(catMenu.trim(), true, {
+        ...sessionState,
+        current_step: "BROWSE_CATEGORIES",
+        category_page: currentCatPage,
+      });
+    }
+
+    // =========================================================================
+    // Step 6: BROWSE_NOMINEES (Nominees in Category Browsing)
+    // =========================================================================
+    if (currentStep === "BROWSE_NOMINEES") {
+      if (userInput === "00") {
+        // Back to categories
+        const { data: allCategories = [] } = await supabase
+          .from("award_categories")
+          .select("id, title, display_order")
+          .eq("is_active", true)
+          .order("display_order", { ascending: true });
+
+        const categories = allCategories || [];
+        const catPageSize = 4;
+        const totalCatPages = Math.max(1, Math.ceil(categories.length / catPageSize));
+        const currentCatPage = sessionState.category_page || 1;
         const startIdx = (currentCatPage - 1) * catPageSize;
         const pageCats = categories.slice(startIdx, startIdx + catPageSize);
 
         let catMenu = `Select Category (${currentCatPage}/${totalCatPages}):\n`;
         pageCats.forEach((c, idx) => {
-          const itemNum = startIdx + idx + 1;
-          catMenu += `${itemNum}. ${c.title}\n`;
+          catMenu += `${idx + 1}. ${c.title}\n`;
         });
-
         catMenu += "\n";
         if (currentCatPage < totalCatPages) catMenu += "99. Next Page >>\n";
         if (currentCatPage > 1) catMenu += "88. << Prev Page\n";
         catMenu += "00. Main Menu";
 
-        return respondUSSD(catMenu.trim(), true);
+        return respondUSSD(catMenu.trim(), true, {
+          ...sessionState,
+          current_step: "BROWSE_CATEGORIES",
+        });
       }
 
-      const selectedCat = categories[selectedCatIndex];
-      if (!selectedCat) {
-        return respondUSSD(`Invalid category option.\n\n00. Back to Categories`, true);
-      }
-
-      // Fetch nominees in the selected category
+      const categoryId = sessionState.category_id;
       const { data: allNominees = [] } = await supabase
         .from("nominees")
         .select("id, name, nominee_code")
-        .eq("category_id", selectedCat.id)
+        .eq("category_id", categoryId)
+        .eq("is_published", true)
         .order("nominee_code", { ascending: true });
 
       const catNominees = allNominees || [];
       const nomPageSize = 4;
       const totalNomPages = Math.max(1, Math.ceil(catNominees.length / nomPageSize));
+      let currentNomPage = sessionState.nominee_page || 1;
 
-      let currentNomPage = 1;
-      let selectedNomIndex: number | null = null;
-      let nomineeStepIndex = subStepIndex;
+      if (userInput === "99") {
+        currentNomPage = Math.min(totalNomPages, currentNomPage + 1);
+      } else if (userInput === "88") {
+        currentNomPage = Math.max(1, currentNomPage - 1);
+      } else {
+        // Match by nominee code (e.g. 101) or page selection number (1, 2, 3...)
+        const codeMatch = catNominees.find((n) => n.nominee_code === userInput);
+        const startIdx = (currentNomPage - 1) * nomPageSize;
+        const numMatch = catNominees[startIdx + (parseInt(userInput, 10) - 1)];
+        const selectedNominee = codeMatch || numMatch;
 
-      for (let i = subStepIndex; i < steps.length; i++) {
-        const val = steps[i];
-        if (val === "00") {
-          // Go back to categories
-          return respondUSSD(`Enter 2 to browse categories or 00 for Main Menu.`, true);
-        } else if (val === "99") {
-          currentNomPage = Math.min(totalNomPages, currentNomPage + 1);
-        } else if (val === "88") {
-          currentNomPage = Math.max(1, currentNomPage - 1);
-        } else {
-          // Check if match by candidate code (e.g. 101) or list number (1, 2, 3...)
-          const codeMatchIdx = catNominees.findIndex((n) => n.nominee_code === val);
-          if (codeMatchIdx !== -1) {
-            selectedNomIndex = codeMatchIdx;
-            nomineeStepIndex = i + 1;
-            break;
-          }
-          const num = parseInt(val, 10);
-          if (!isNaN(num) && num >= 1 && num <= catNominees.length) {
-            selectedNomIndex = num - 1;
-            nomineeStepIndex = i + 1;
-            break;
-          }
-        }
-      }
-
-      // If user hasn't selected a nominee yet, render the nominees page
-      if (selectedNomIndex === null) {
-        if (catNominees.length === 0) {
+        if (selectedNominee) {
           return respondUSSD(
-            `Category: ${selectedCat.title}\n\nNo nominees registered in this category yet.\n\n00. Back to Categories`,
-            true
+            `Nominee: ${selectedNominee.name}\n` +
+            `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+            `Enter number of votes to cast:\n` +
+            `(e.g. 1, 5, 10, 20...)\n\n` +
+            `00. Back`,
+            true,
+            {
+              ...sessionState,
+              current_step: "ENTER_VOTES",
+              candidate_code: selectedNominee.nominee_code,
+              nominee_id: selectedNominee.id,
+              nominee_name: selectedNominee.name,
+            }
           );
         }
-
-        const startIdx = (currentNomPage - 1) * nomPageSize;
-        const pageNominees = catNominees.slice(startIdx, startIdx + nomPageSize);
-
-        let nomMenu = `${selectedCat.title} (${currentNomPage}/${totalNomPages}):\n`;
-        pageNominees.forEach((n, idx) => {
-          const itemNum = startIdx + idx + 1;
-          const codeTag = n.nominee_code ? ` (#${n.nominee_code})` : "";
-          nomMenu += `${itemNum}. ${n.name}${codeTag}\n`;
-        });
-
-        nomMenu += "\n";
-        if (currentNomPage < totalNomPages) nomMenu += "99. Next Page >>\n";
-        if (currentNomPage > 1) nomMenu += "88. << Prev Page\n";
-        nomMenu += "00. Back to Categories";
-
-        return respondUSSD(nomMenu.trim(), true);
       }
 
-      const selectedNom = catNominees[selectedNomIndex];
-      if (!selectedNom) {
-        return respondUSSD(`Invalid nominee selection.\n\n00. Back`, true);
-      }
+      // Re-render nominees page after 99 / 88 navigation
+      const startIdx = (currentNomPage - 1) * nomPageSize;
+      const pageNominees = catNominees.slice(startIdx, startIdx + nomPageSize);
+      const catTitle = sessionState.category_title || "Category";
 
-      // Ask for vote quantity
-      const votesQty = steps[nomineeStepIndex];
-      if (!votesQty) {
-        return respondUSSD(
-          `Nominee: ${selectedNom.name} (#${selectedNom.nominee_code || "—"})\n` +
-          `Category: ${selectedCat.title}\n` +
-          `Rate: ${formatGHS(votePrice)} / vote\n\n` +
-          `Enter number of votes:\n` +
-          `(e.g. 1, 5, 10, 20...)\n\n` +
-          `00. Back`,
-          true
-        );
-      }
-
-      if (votesQty === "00") {
-        return respondUSSD(`Enter candidate code or number to select nominee.`, true);
-      }
-
-      const voteCount = Math.max(1, parseInt(votesQty, 10) || 1);
-      const totalAmount = voteCount * votePrice;
-
-      // Confirmation step
-      const confirmInput = steps[nomineeStepIndex + 1];
-      if (!confirmInput) {
-        return respondUSSD(
-          `Confirm Vote for:\n` +
-          `• ${selectedNom.name} (#${selectedNom.nominee_code || "—"})\n` +
-          `• Category: ${selectedCat.title}\n` +
-          `• Quantity: ${voteCount} Votes\n` +
-          `• Total: ${formatGHS(totalAmount)}\n\n` +
-          `1. Confirm & Pay via MoMo\n` +
-          `2. Cancel\n\n` +
-          `00. Back`,
-          true
-        );
-      }
-
-      if (confirmInput === "1") {
-        // Record vote in Supabase
-        const { data: currentNom } = await supabase
-          .from("nominees")
-          .select("votes_count")
-          .eq("id", selectedNom.id)
-          .maybeSingle();
-
-        const newVotes = (currentNom?.votes_count || 0) + voteCount;
-        await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", selectedNom.id);
-
-        const trxRef = `USSD_${Date.now().toString().slice(-8)}`;
-        await supabase.from("payments").insert({
-          client_reference: trxRef,
-          transaction_id: trxRef,
-          amount: totalAmount,
-          currency: "GHS",
-          customer_name: `USSD Voter (${userId})`,
-          customer_email: "ussd-voting@abcossa.org",
-          customer_phone: userId,
-          payment_type: "voting",
-          status: "paid",
-          payment_channel: "ussd-arkesel",
-          description: `Arkesel USSD Vote for ${selectedNom.name} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
-          metadata: {
-            nominee_id: selectedNom.id,
-            nominee_code: selectedNom.nominee_code,
-            nominee_name: selectedNom.name,
-            votes_count: voteCount,
-            session_id: sessionId,
-            gateway: "arkesel",
-          },
-        });
-
-        return respondUSSD(
-          `Payment Request Initiated!\n\n` +
-          `You requested ${voteCount} vote(s) for ${selectedNom.name} (${formatGHS(totalAmount)}).\n\n` +
-          `Please authorize the Mobile Money PIN prompt on your phone.\n\n` +
-          `Thank you for voting!`,
-          false
-        );
-      } else {
-        return respondUSSD(`Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.`, false);
-      }
-    }
-
-    // Branch 3: Pricing & Info
-    if (firstInput === "3") {
-      return respondUSSD(
-        `ABCOSSA Dinner Awards '26\n\n` +
-        `• Voting Rate: ${formatGHS(votePrice)} per vote\n` +
-        `• Direct Dial: *928*667*[Code]#\n` +
-        `• Networks: MTN, Telecel, AT\n` +
-        `• Online: https://abcossa.org\n\n` +
-        `00. Main Menu`,
-        true
-      );
-    }
-
-    // Branch 4: Live Standings Leader
-    if (firstInput === "4") {
-      const { data: topNominees = [] } = await supabase
-        .from("nominees")
-        .select("name, votes_count, nominee_code")
-        .order("votes_count", { ascending: false })
-        .limit(3);
-
-      let text = "🏆 Live Standings Leaders:\n\n";
-      (topNominees || []).forEach((n, idx) => {
-        text += `${idx + 1}. ${n.name} (#${n.nominee_code || "—"}): ${n.votes_count || 0} votes\n`;
+      let nomMenu = `${catTitle} (${currentNomPage}/${totalNomPages}):\n`;
+      pageNominees.forEach((n, idx) => {
+        nomMenu += `${idx + 1}. ${n.name} (#${n.nominee_code})\n`;
       });
-      text += "\n00. Main Menu";
-      return respondUSSD(text, true);
+      nomMenu += "\n";
+      if (currentNomPage < totalNomPages) nomMenu += "99. Next Page >>\n";
+      if (currentNomPage > 1) nomMenu += "88. << Prev Page\n";
+      nomMenu += "00. Back to Categories";
+
+      return respondUSSD(nomMenu.trim(), true, {
+        ...sessionState,
+        current_step: "BROWSE_NOMINEES",
+        nominee_page: currentNomPage,
+      });
     }
 
-    // Fallback default
-    return respondUSSD(
-      `Welcome to ABCOSSA Dinner Awards '26\n\n` +
-      `1. Vote with Candidate Code\n` +
-      `2. Browse Award Categories\n` +
-      `3. View Pricing & Info\n` +
-      `4. Check Live Standings`,
-      true
-    );
+    // Info or Standings -> any input returns to main menu
+    if (currentStep === "INFO" || currentStep === "STANDINGS") {
+      return renderMainMenu();
+    }
+
+    // Fallback: render main menu
+    return renderMainMenu();
   } catch (error) {
-    console.error("Error processing Arkesel USSD webhook:", error);
+    console.error("Fatal error in Arkesel USSD webhook:", error);
     return new Response(
       JSON.stringify({
         sessionID: "error",
-        message: "An error occurred processing your request. Please try dialing *928*667# again.",
+        message: "An unexpected error occurred. Please try again shortly.",
         continueSession: false,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
