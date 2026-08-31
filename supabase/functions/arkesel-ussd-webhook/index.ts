@@ -1124,22 +1124,33 @@ serve(async (req) => {
 
         if (paymentResult.gateway === "unconfigured") {
           return respondUSSD(
-            `Vote Recorded (Pending Payment).\n\n` +
-            `Please configure your Paystack Secret Key in Staff Portal Settings to send automated MoMo prompts.\n\n` +
-            `Thank you for supporting ABCOSSA!`,
+            "Payment Setup Required:\\n\\n" +
+            "Paystack Secret Key is not configured yet. Please add your Paystack Secret Key in Staff Portal Settings to send live MoMo PIN prompts.\\n\\n" +
+            "Thank you for supporting ABCOSSA!",
+            false
+          );
+        }
+
+        if (!paymentResult.success) {
+          const errMsg = paymentResult.result?.message || "Could not trigger network prompt.";
+          return respondUSSD(
+            `Payment Notice:\\n\\n` +
+            `${errMsg}\\n\\n` +
+            `Phone: ${walletPhone}\\n` +
+            `Please check your Paystack settings or try again.`,
             false
           );
         }
 
         return respondUSSD(
-          `Payment Request Sent!\n\n` +
-          `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\n\n` +
-          `Please enter your Mobile Money PIN when prompted on your phone to approve the vote.\n\n` +
-          `Thank you for supporting ABCOSSA!`,
+          `Payment Prompt Sent!\\n\\n` +
+          `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\\n\\n` +
+          `Please enter your MoMo PIN to authorize the payment.\\n` +
+          `(MTN: Also check *170# -> 6. Approvals if prompt does not appear automatically).`,
           false
         );
       } else {
-        return respondUSSD("Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.", false);
+        return respondUSSD("Voting transaction cancelled.\\n\\nThank you for using ABCOSSA USSD.", false);
       }
     }
 
