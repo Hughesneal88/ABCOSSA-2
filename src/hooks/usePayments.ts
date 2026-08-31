@@ -160,6 +160,86 @@ export function useCancelPayment() {
   });
 }
 
+export function useUpdatePaymentStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      paymentId,
+      newStatus,
+      syncVotes = true,
+    }: {
+      paymentId: string;
+      newStatus: "paid" | "pending" | "failed" | "cancelled";
+      syncVotes?: boolean;
+    }) => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      // 1. Fetch current payment details
+      const { data: currentPayment, error: fetchErr } = await supabase
+        .from("payments")
+        .select("*")
+        .eq("id", paymentId)
+        .maybeSingle();
+
+      if (fetchErr) throw fetchErr;
+      if (!currentPayment) throw new Error("Payment record not found");
+
+      const oldStatus = currentPayment.status;
+      const nomineeId = currentPayment.metadata?.nominee_id;
+      const votesCount = Number(currentPayment.metadata?.votes_count || 0);
+
+      // 2. If status is changing and voting metadata exists:
+      if (syncVotes && nomineeId && votesCount > 0 && oldStatus !== newStatus) {
+        // Case A: Changing TO "paid" from non-paid -> Credit votes
+        if (newStatus === "paid" && oldStatus !== "paid") {
+          const { data: nominee } = await supabase
+            .from("nominees")
+            .select("id, votes_count")
+            .eq("id", nomineeId)
+            .maybeSingle();
+
+          if (nominee) {
+            const newVotes = (nominee.votes_count || 0) + votesCount;
+            await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+          }
+        }
+        // Case B: Changing FROM "paid" to non-paid -> Deduct votes
+        else if (oldStatus === "paid" && newStatus !== "paid") {
+          const { data: nominee } = await supabase
+            .from("nominees")
+            .select("id, votes_count")
+            .eq("id", nomineeId)
+            .maybeSingle();
+
+          if (nominee) {
+            const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
+            await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+          }
+        }
+      }
+
+      // 3. Update payment record in Supabase
+      const { error: updateErr } = await supabase
+        .from("payments")
+        .update({
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", paymentId);
+
+      if (updateErr) throw updateErr;
+
+      return { paymentId, oldStatus, newStatus, nomineeId, votesCount };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+    },
+  });
+}
+
 export function useDeletePayment() {
   const queryClient = useQueryClient();
 

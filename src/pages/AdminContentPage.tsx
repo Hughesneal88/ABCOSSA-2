@@ -54,6 +54,7 @@ import {
   usePayments,
   usePaystackSettings,
   useUpdatePaystackSettings,
+  useUpdatePaymentStatus,
   useDeletePayment,
   useDeleteMultiplePayments,
   useClearPendingPayments,
@@ -5021,6 +5022,7 @@ function PaymentsAdminPanel() {
   const { data: paystackSettings, isLoading: loadingSettings } = usePaystackSettings();
   const updateSettingsMutation = useUpdatePaystackSettings();
   const { data: payments = [], isLoading: loadingPayments } = usePayments();
+  const updateStatusMutation = useUpdatePaymentStatus();
   const deletePaymentMutation = useDeletePayment();
   const deleteMultipleMutation = useDeleteMultiplePayments();
   const clearPendingMutation = useClearPendingPayments();
@@ -5040,6 +5042,7 @@ function PaymentsAdminPanel() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deductVotesOnDelete, setDeductVotesOnDelete] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
 
   useEffect(() => {
     if (paystackSettings && !settingsInitialized) {
@@ -5115,6 +5118,44 @@ function PaymentsAdminPanel() {
       else next.add(id);
       return next;
     });
+  };
+
+  const handleStatusChange = (
+    payment: PaymentRecord,
+    newStatus: "paid" | "pending" | "failed" | "cancelled",
+    e?: React.MouseEvent | React.ChangeEvent
+  ) => {
+    if (e) (e as any).stopPropagation?.();
+    if (payment.status === newStatus) return;
+
+    setUpdatingStatusId(payment.id);
+    updateStatusMutation.mutate(
+      {
+        paymentId: payment.id,
+        newStatus: newStatus,
+        syncVotes: true,
+      },
+      {
+        onSuccess: (data) => {
+          const voteMsg =
+            data.nomineeId && data.votesCount
+              ? data.newStatus === "paid"
+                ? ` (+${data.votesCount} votes credited to nominee)`
+                : ` (-${data.votesCount} votes reversed from nominee)`
+              : "";
+          toast.success(`Transaction marked as "${newStatus}"${voteMsg}`);
+          if (selectedPayment?.id === payment.id) {
+            setSelectedPayment((prev) => (prev ? { ...prev, status: newStatus } : null));
+          }
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error ? err.message : "Failed to update payment status");
+        },
+        onSettled: () => {
+          setUpdatingStatusId(null);
+        },
+      }
+    );
   };
 
   const handleDeleteSingle = async (p: PaymentRecord, deduct: boolean, e?: React.MouseEvent) => {
@@ -5319,7 +5360,7 @@ function PaymentsAdminPanel() {
           <div>
             <h3 className="text-lg font-bold text-foreground">Transaction Logs ({filteredPayments.length})</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Click on any transaction row to inspect its full payload, nominee vote details, or delete test records.
+              Click on any transaction row to inspect details, switch status (Paid / Pending / Failed), or delete test logs.
             </p>
           </div>
 
@@ -5454,21 +5495,40 @@ function PaymentsAdminPanel() {
                       </span>
                     </td>
                     <td className="p-3 capitalize text-muted-foreground">{p.payment_type || "voting"}</td>
-                    <td className="p-3">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                          p.status === "paid"
-                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                            : p.status === "pending"
-                            ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
-                            : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
-                        }`}
+                    <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                      {/* Interactive Status Switcher on Row */}
+                      <Select
+                        value={p.status}
+                        onValueChange={(val: "paid" | "pending" | "failed" | "cancelled") =>
+                          handleStatusChange(p, val)
+                        }
                       >
-                        {p.status}
-                      </span>
+                        <SelectTrigger
+                          className={`h-7 px-2 text-[10px] font-bold uppercase rounded-full border ${
+                            p.status === "paid"
+                              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                              : p.status === "pending"
+                              ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                              : "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                          }`}
+                        >
+                          {updatingStatusId === p.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin mx-auto" />
+                          ) : (
+                            <SelectValue />
+                          )}
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="paid">PAID (Success)</SelectItem>
+                          <SelectItem value="pending">PENDING</SelectItem>
+                          <SelectItem value="failed">FAILED</SelectItem>
+                          <SelectItem value="cancelled">CANCELLED</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </td>
                     <td className="p-3 text-muted-foreground text-[11px] whitespace-nowrap">
-                      {new Date(p.created_at).toLocaleDateString()} {new Date(p.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {new Date(p.created_at).toLocaleDateString()}{" "}
+                      {new Date(p.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </td>
                     <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <Button
@@ -5495,7 +5555,7 @@ function PaymentsAdminPanel() {
         )}
       </section>
 
-      {/* 4. Transaction Details Modal */}
+      {/* 4. Transaction Details Modal with Status Switcher */}
       <Dialog open={Boolean(selectedPayment)} onOpenChange={(open) => !open && setSelectedPayment(null)}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           {selectedPayment && (
@@ -5524,6 +5584,65 @@ function PaymentsAdminPanel() {
               </DialogHeader>
 
               <div className="space-y-4 text-xs pt-2">
+                {/* Status Switcher Action Box */}
+                <div className="p-3 bg-muted/40 rounded-xl border border-border/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-foreground">Switch Payment Status</span>
+                    {updatingStatusId === selectedPayment.id && (
+                      <span className="text-[10px] text-primary flex items-center gap-1 font-semibold">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Updating...
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={selectedPayment.status === "paid" ? "default" : "outline"}
+                      disabled={updatingStatusId === selectedPayment.id}
+                      onClick={() => handleStatusChange(selectedPayment, "paid")}
+                      className={`h-8 text-xs font-semibold ${
+                        selectedPayment.status === "paid"
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                          : "text-emerald-600 hover:bg-emerald-500/10 border-emerald-500/30"
+                      }`}
+                    >
+                      <Check className="w-3.5 h-3.5 mr-1" /> Mark Paid
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={selectedPayment.status === "pending" ? "default" : "outline"}
+                      disabled={updatingStatusId === selectedPayment.id}
+                      onClick={() => handleStatusChange(selectedPayment, "pending")}
+                      className={`h-8 text-xs font-semibold ${
+                        selectedPayment.status === "pending"
+                          ? "bg-amber-500 hover:bg-amber-600 text-white"
+                          : "text-amber-600 hover:bg-amber-500/10 border-amber-500/30"
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5 mr-1" /> Pending
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={selectedPayment.status === "failed" ? "default" : "outline"}
+                      disabled={updatingStatusId === selectedPayment.id}
+                      onClick={() => handleStatusChange(selectedPayment, "failed")}
+                      className={`h-8 text-xs font-semibold ${
+                        selectedPayment.status === "failed"
+                          ? "bg-rose-600 hover:bg-rose-700 text-white"
+                          : "text-rose-600 hover:bg-rose-500/10 border-rose-500/30"
+                      }`}
+                    >
+                      <XIcon className="w-3.5 h-3.5 mr-1" /> Failed
+                    </Button>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Switching to <strong>Paid</strong> credits candidate votes in standings. Switching to <strong>Failed/Pending</strong> reverses the votes.
+                  </p>
+                </div>
+
                 {/* Financial Summary */}
                 <div className="p-3 bg-muted/40 rounded-xl border border-border/60 flex items-center justify-between">
                   <div>
@@ -5558,39 +5677,46 @@ function PaymentsAdminPanel() {
                 </div>
 
                 {/* Voting Metadata Block (If available) */}
-                {selectedPayment.metadata && (selectedPayment.metadata.nominee_name || selectedPayment.metadata.votes_count) && (
-                  <div className="space-y-2 p-3 bg-primary/5 border border-primary/20 rounded-xl">
-                    <div className="font-bold text-[11px] text-primary flex items-center gap-1.5">
-                      <Award className="w-3.5 h-3.5" /> Award Voting Information
+                {selectedPayment.metadata &&
+                  (selectedPayment.metadata.nominee_name || selectedPayment.metadata.votes_count) && (
+                    <div className="space-y-2 p-3 bg-primary/5 border border-primary/20 rounded-xl">
+                      <div className="font-bold text-[11px] text-primary flex items-center gap-1.5">
+                        <Award className="w-3.5 h-3.5" /> Award Voting Information
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div>
+                          <span className="text-muted-foreground block text-[10px]">Nominee</span>
+                          <strong className="text-foreground">
+                            {selectedPayment.metadata.nominee_name || "Nominee"}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[10px]">Candidate Code</span>
+                          <strong className="text-foreground font-mono">
+                            #{selectedPayment.metadata.nominee_code || "N/A"}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[10px]">Votes Cast</span>
+                          <strong className="text-emerald-600 dark:text-emerald-400">
+                            {selectedPayment.metadata.votes_count || 1} Vote(s)
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground block text-[10px]">Gateway</span>
+                          <strong className="capitalize">{selectedPayment.metadata.gateway || "Paystack"}</strong>
+                        </div>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
-                      <div>
-                        <span className="text-muted-foreground block text-[10px]">Nominee</span>
-                        <strong className="text-foreground">{selectedPayment.metadata.nominee_name || "Nominee"}</strong>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[10px]">Candidate Code</span>
-                        <strong className="text-foreground font-mono">#{selectedPayment.metadata.nominee_code || "N/A"}</strong>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[10px]">Votes Cast</span>
-                        <strong className="text-emerald-600 dark:text-emerald-400">
-                          {selectedPayment.metadata.votes_count || 1} Vote(s)
-                        </strong>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[10px]">Gateway</span>
-                        <strong className="capitalize">{selectedPayment.metadata.gateway || "Paystack"}</strong>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                  )}
 
                 {/* Timestamps */}
                 <div className="text-[10px] text-muted-foreground space-y-1">
                   <div>Created: {new Date(selectedPayment.created_at).toLocaleString()}</div>
                   {selectedPayment.transaction_id && (
-                    <div>Gateway Trx ID: <code className="font-mono">{selectedPayment.transaction_id}</code></div>
+                    <div>
+                      Gateway Trx ID: <code className="font-mono">{selectedPayment.transaction_id}</code>
+                    </div>
                   )}
                 </div>
 
