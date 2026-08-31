@@ -160,6 +160,92 @@ export function useCancelPayment() {
   });
 }
 
+export function useDeletePayment() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ paymentId, deductVotes = false }: { paymentId: string; deductVotes?: boolean }) => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      if (deductVotes) {
+        const { data: payment } = await supabase
+          .from("payments")
+          .select("*")
+          .eq("id", paymentId)
+          .maybeSingle();
+
+        const nomineeId = payment?.metadata?.nominee_id;
+        const votesCount = Number(payment?.metadata?.votes_count || 0);
+
+        if (payment?.status === "paid" && nomineeId && votesCount > 0) {
+          const { data: nominee } = await supabase
+            .from("nominees")
+            .select("id, votes_count")
+            .eq("id", nomineeId)
+            .maybeSingle();
+
+          if (nominee) {
+            const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
+            await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
+          }
+        }
+      }
+
+      const { error } = await supabase.from("payments").delete().eq("id", paymentId);
+      if (error) throw error;
+      return paymentId;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+    },
+  });
+}
+
+export function useDeleteMultiplePayments() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (paymentIds: string[]) => {
+      if (!supabase) throw new Error("Supabase client is not available");
+      if (paymentIds.length === 0) return [];
+
+      const { error } = await supabase.from("payments").delete().in("id", paymentIds);
+      if (error) throw error;
+      return paymentIds;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+    },
+  });
+}
+
+export function useClearPendingPayments() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      const { data, error } = await supabase
+        .from("payments")
+        .delete()
+        .in("status", ["pending", "failed", "cancelled"])
+        .select("id");
+
+      if (error) throw error;
+      return data?.length || 0;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+    },
+  });
+}
+
 // Backward compatibility wrappers
 export const useHubtelSettings = usePaystackSettings;
 export const useUpdateHubtelSettings = useUpdatePaystackSettings;
+
