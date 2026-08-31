@@ -448,19 +448,43 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="phone-caption">2. Enter Vote Quantity</div>
       </div>
 
-      <!-- Step 3 -->
+      <!-- Step 3: Network Provider Selection -->
       <div class="phone-card">
         <div class="step-badge">3</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen">
             <div class="ussd-dialog">
-              <div class="ussd-header">Confirm Vote & Payment</div>
+              <div class="ussd-header">Select Payment Network</div>
               <div class="ussd-body">
-                <div class="ussd-bullet">• <strong>Nominee:</strong> Ama Serwaa</div>
-                <div class="ussd-bullet">• <strong>Votes:</strong> 5 (GHS 5.00)</div>
-                <div style="margin-top: 4px;">
-                  <div class="ussd-menu-item">1. Confirm & Pay via MoMo</div>
+                <div style="font-size: 8.5px; color: #64748b; margin-bottom: 3px;">5 Votes = GHS 5.00</div>
+                <div class="ussd-menu-item">1. MTN Mobile Money</div>
+                <div class="ussd-menu-item">2. Telecel Cash</div>
+                <div class="ussd-menu-item">3. AT Money</div>
+              </div>
+              <div class="ussd-input-box">Input: 1</div>
+              <div class="ussd-back">00. Back</div>
+            </div>
+          </div>
+        </div>
+        <div class="phone-caption">3. Select MoMo Network</div>
+      </div>
+
+      <!-- Step 4: Summary & Authorize -->
+      <div class="phone-card">
+        <div class="step-badge">4</div>
+        <div class="phone-device">
+          <div class="phone-notch"></div>
+          <div class="phone-screen">
+            <div class="ussd-dialog">
+              <div class="ussd-header">Vote Summary</div>
+              <div class="ussd-body">
+                <div class="ussd-bullet">• <strong>Nominee:</strong> Ama Serwaa (101)</div>
+                <div class="ussd-bullet">• <strong>Quantity:</strong> 5 Votes</div>
+                <div class="ussd-bullet">• <strong>Total:</strong> GHS 5.00</div>
+                <div class="ussd-bullet">• <strong>Network:</strong> MTN MoMo</div>
+                <div style="margin-top: 3px;">
+                  <div class="ussd-menu-item">1. Authorize & Pay</div>
                   <div class="ussd-menu-item">2. Cancel</div>
                 </div>
               </div>
@@ -469,30 +493,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             </div>
           </div>
         </div>
-        <div class="phone-caption">3. Review & Confirm</div>
-      </div>
-
-      <!-- Step 4 -->
-      <div class="phone-card">
-        <div class="step-badge">4</div>
-        <div class="phone-device">
-          <div class="phone-notch"></div>
-          <div class="phone-screen">
-            <div class="ussd-dialog">
-              <div class="ussd-header">Payment Request Sent</div>
-              <div class="ussd-body" style="text-align: center; padding: 4px 0;">
-                <div style="font-weight: 700; color: #0f172a; margin-bottom: 4px;">
-                  Requested 5 votes for Ama Serwaa (GHS 5.00).
-                </div>
-                <div style="font-size: 8.5px; color: #64748b;">
-                  Please wait for your network Mobile Money PIN prompt.
-                </div>
-              </div>
-              <div class="ussd-back">Session Ended</div>
-            </div>
-          </div>
-        </div>
-        <div class="phone-caption">4. Awaiting PIN Prompt</div>
+        <div class="phone-caption">4. Authorize & Push MoMo</div>
       </div>
     </div>
 

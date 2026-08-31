@@ -19,20 +19,166 @@ interface UssdSessionState {
   category_page: number;
   nominee_page: number;
   quantity: number;
+  network?: string | null;
+  wallet_phone?: string | null;
   metadata?: Record<string, any>;
 }
 
 // In-memory fallback cache in case ussd_sessions table is momentarily unreachable
 const inMemorySessions = new Map<string, UssdSessionState>();
 
+function normalizePhone(rawPhone: string) {
+  const cleaned = String(rawPhone || "").trim().replace(/[^\d]/g, "");
+  if (cleaned.startsWith("233") && cleaned.length === 12) {
+    return {
+      international: cleaned,
+      local: `0${cleaned.slice(3)}`,
+    };
+  }
+  if (cleaned.startsWith("0") && cleaned.length === 10) {
+    return {
+      international: `233${cleaned.slice(1)}`,
+      local: cleaned,
+    };
+  }
+  return {
+    international: cleaned,
+    local: cleaned,
+  };
+}
+
+async function triggerMoMoPayment(params: {
+  amount: number;
+  phone: string;
+  network: string;
+  reference: string;
+  nomineeName: string;
+  votesCount: number;
+  supabase: any;
+}) {
+  const { amount, phone, network, reference, nomineeName, votesCount, supabase } = params;
+  const normalized = normalizePhone(phone);
+
+  const { data: settingsRows } = await supabase
+    .from("site_settings")
+    .select("key, value")
+    .in("key", [
+      "arkesel_api_key",
+      "hubtel_client_id",
+      "hubtel_client_secret",
+      "hubtel_merchant_account_number",
+      "paystack_secret_key"
+    ]);
+
+  const settings: Record<string, string> = Object.fromEntries(
+    (settingsRows || []).map((r: { key: string; value: string }) => [r.key, r.value])
+  );
+
+  const arkeselKey = settings["arkesel_api_key"] || Deno.env.get("ARKESEL_API_KEY") || "";
+  const hubtelClientId = settings["hubtel_client_id"] || Deno.env.get("HUBTEL_CLIENT_ID") || "";
+  const hubtelSecret = settings["hubtel_client_secret"] || Deno.env.get("HUBTEL_CLIENT_SECRET") || "";
+  const hubtelMerchant = settings["hubtel_merchant_account_number"] || Deno.env.get("HUBTEL_MERCHANT_ACCOUNT_NUMBER") || "2019842";
+  const paystackKey = settings["paystack_secret_key"] || Deno.env.get("PAYSTACK_SECRET_KEY") || "";
+
+  // 1. Try Arkesel MoMo API
+  if (arkeselKey) {
+    try {
+      const res = await fetch("https://api.arkesel.com/api/v2/momo/debit", {
+        method: "POST",
+        headers: {
+          "api-key": arkeselKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: amount,
+          currency: "GHS",
+          phone: normalized.local,
+          network: network.toUpperCase(),
+          reference: reference,
+          callback_url: "https://abcossa.org",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      console.log("Arkesel MoMo debit response:", data);
+      return { gateway: "arkesel", result: data };
+    } catch (e) {
+      console.warn("Arkesel MoMo debit error:", e);
+    }
+  }
+
+  // 2. Try Hubtel Receive MoMo API
+  if (hubtelClientId && hubtelSecret) {
+    try {
+      const channel = network.toLowerCase().includes("mtn")
+        ? "mtn-gh"
+        : network.toLowerCase().includes("telecel") || network.toLowerCase().includes("vod")
+        ? "vodafone-gh"
+        : "airteltigo-gh";
+
+      const auth = btoa(`${hubtelClientId}:${hubtelSecret}`);
+      const res = await fetch(`https://api-merchant.hubtel.com/v1/merchantaccount/merchants/${hubtelMerchant}/receive/mobilemoney`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          CustomerName: "USSD Voter",
+          CustomerMsisdn: normalized.local,
+          CustomerEmail: "ussd-voting@abcossa.org",
+          Channel: channel,
+          Amount: amount,
+          Description: `ABCOSSA Vote: ${votesCount} for ${nomineeName}`,
+          ClientReference: reference,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      console.log("Hubtel MoMo receive response:", data);
+      return { gateway: "hubtel", result: data };
+    } catch (e) {
+      console.warn("Hubtel MoMo receive error:", e);
+    }
+  }
+
+  // 3. Try Paystack MoMo Charge API
+  if (paystackKey) {
+    try {
+      const provider = network.toLowerCase().includes("mtn")
+        ? "mtn"
+        : network.toLowerCase().includes("telecel") || network.toLowerCase().includes("vod")
+        ? "vod"
+        : "tgo";
+
+      const res = await fetch("https://api.paystack.co/charge", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${paystackKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: Math.round(amount * 100),
+          email: "ussd-voting@abcossa.org",
+          currency: "GHS",
+          reference: reference,
+          mobile_money: {
+            phone: normalized.local,
+            provider: provider,
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      console.log("Paystack MoMo charge response:", data);
+      return { gateway: "paystack", result: data };
+    } catch (e) {
+      console.warn("Paystack MoMo charge error:", e);
+    }
+  }
+
+  return { gateway: "simulated", result: { status: "pending" } };
+}
+
 /**
  * Arkesel USSD Gateway Interactive Engine & Stateful Webhook Handler
- *
- * Handles:
- * 1. Step-by-Step Interactive Sessions (Arkesel sends single-turn input in each HTTP request)
- * 2. Express Dialing (e.g. *928*667*101# or *928*667*101*5#)
- * 3. Dynamic Category & Nominee Directory Browsing with Pagination (99. Next, 88. Prev, 00. Back)
- * 4. Automatic Mobile Money Payment Triggering & Webhook Callbacks
  */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -44,7 +190,7 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 1. Parse incoming parameters (support POST JSON, POST Form Data, and GET Query Params)
+    // Parse incoming parameters
     let payload: Record<string, any> = {};
 
     if (req.method === "GET") {
@@ -74,7 +220,6 @@ serve(async (req) => {
 
     console.log("Arkesel USSD received payload:", JSON.stringify(payload));
 
-    // Normalize incoming session fields across Arkesel / Ghana USSD gateway dialects
     const sessionId = String(
       payload.sessionID ||
       payload.sessionId ||
@@ -111,9 +256,10 @@ serve(async (req) => {
       "Response"
     ).trim();
 
+    const phoneInfo = normalizePhone(userId);
+
     // Helper for responding in Arkesel standard USSD format
     const respondUSSD = async (message: string, continueSession = true, nextState?: Partial<UssdSessionState>) => {
-      // If nextState is provided, update the session in Supabase & memory
       if (nextState) {
         const updatedState: UssdSessionState = {
           session_id: sessionId,
@@ -127,6 +273,8 @@ serve(async (req) => {
           category_page: nextState.category_page ?? 1,
           nominee_page: nextState.nominee_page ?? 1,
           quantity: nextState.quantity ?? 1,
+          network: nextState.network ?? null,
+          wallet_phone: nextState.wallet_phone ?? null,
           metadata: nextState.metadata ?? {},
         };
 
@@ -145,7 +293,6 @@ serve(async (req) => {
         }
       }
 
-      // If session is closing (continueSession: false), clean up state
       if (!continueSession) {
         inMemorySessions.delete(sessionId);
         try {
@@ -171,7 +318,11 @@ serve(async (req) => {
     };
 
     // Helper to format currency
-    const formatGHS = (val: number) => `GHS ${val.toFixed(2)}`;
+    const formatGHS = (val: number) => {
+      const num = Number(val);
+      const safe = isNaN(num) ? 1.0 : num;
+      return `GHS ${safe.toFixed(2)}`;
+    };
 
     // Fetch dynamic site voting price
     const { data: priceRow } = await supabase
@@ -179,7 +330,8 @@ serve(async (req) => {
       .select("value")
       .eq("key", "vote_price_ghs")
       .maybeSingle();
-    const votePrice = priceRow?.value ? parseFloat(priceRow.value) : 1.0;
+    const rawPrice = priceRow?.value ? parseFloat(String(priceRow.value)) : 1.0;
+    const votePrice = isNaN(rawPrice) || rawPrice <= 0 ? 1.0 : rawPrice;
 
     // =========================================================================
     // A. Payment Callback / Webhook Notification from Arkesel
@@ -230,7 +382,7 @@ serve(async (req) => {
             payment_type: "voting",
             status: "paid",
             payment_channel: "ussd-arkesel",
-            description: `Arkesel USSD Vote for ${nominee.name} (${votesToAdd} vote${votesToAdd > 1 ? "s" : ""})`,
+            description: `Arkesel USSD Vote for ${nominee.name} (${votesToAdd} votes)`,
             metadata: {
               nominee_id: nominee.id,
               nominee_code: candidateCode,
@@ -258,7 +410,6 @@ serve(async (req) => {
     // B. Interactive USSD Session Flow & State Machine
     // =========================================================================
 
-    // If user hung up or timed out
     if (sessionType.toLowerCase() === "release" || sessionType.toLowerCase() === "timeout") {
       inMemorySessions.delete(sessionId);
       try {
@@ -313,74 +464,15 @@ serve(async (req) => {
         nominee_id: null,
         nominee_name: null,
         quantity: 1,
+        network: null,
+        wallet_phone: null,
       });
     };
 
     // -------------------------------------------------------------------------
-    // Shortcut / Fast-Dial Check (e.g. *928*667*101# or *928*667*101*5#)
-    // -------------------------------------------------------------------------
-    if (cleanInput.includes("*")) {
-      const parts = cleanInput.split("*").map((s) => s.trim()).filter(Boolean);
-      // Fast candidate code
-      const candidateCode = parts[0] === "1" ? parts[1] : parts[0];
-      const qtyStr = parts[0] === "1" ? parts[2] : parts[1];
-
-      if (candidateCode) {
-        const { data: nominee } = await supabase
-          .from("nominees")
-          .select("id, name, nominee_code, category_id, votes_count")
-          .eq("nominee_code", candidateCode)
-          .maybeSingle();
-
-        if (nominee) {
-          if (!qtyStr) {
-            // Prompt for votes
-            return respondUSSD(
-              `Nominee: ${nominee.name}\n` +
-              `Rate: ${formatGHS(votePrice)} / vote\n\n` +
-              `Enter number of votes to cast:\n` +
-              `(e.g. 1, 5, 10, 20...)\n\n` +
-              `00. Back`,
-              true,
-              {
-                current_step: "ENTER_VOTES",
-                candidate_code: nominee.nominee_code,
-                nominee_id: nominee.id,
-                nominee_name: nominee.name,
-              }
-            );
-          } else {
-            // Quantity provided in fast-dial -> prompt confirmation
-            const voteCount = Math.max(1, parseInt(qtyStr, 10) || 1);
-            const totalAmount = voteCount * votePrice;
-
-            return respondUSSD(
-              `Confirm Vote for:\n` +
-              `• ${nominee.name} (#${candidateCode})\n` +
-              `• Quantity: ${voteCount} Vote${voteCount > 1 ? "s" : ""}\n` +
-              `• Total Amount: ${formatGHS(totalAmount)}\n\n` +
-              `1. Confirm & Pay via MoMo\n` +
-              `2. Cancel\n\n` +
-              `00. Back`,
-              true,
-              {
-                current_step: "CONFIRM_VOTE",
-                candidate_code: nominee.nominee_code,
-                nominee_id: nominee.id,
-                nominee_name: nominee.name,
-                quantity: voteCount,
-              }
-            );
-          }
-        }
-      }
-    }
-
-    // -------------------------------------------------------------------------
-    // Step 0: Session Initiation (First dial into *928*667#)
+    // Step 0: Session Initiation
     // -------------------------------------------------------------------------
     if (sessionType.toLowerCase() === "initiation" || !cleanInput || !sessionState) {
-      // If user directly entered a 3-digit candidate code on first dial
       if (/^\d{3,4}$/.test(cleanInput)) {
         const { data: nominee } = await supabase
           .from("nominees")
@@ -391,9 +483,9 @@ serve(async (req) => {
         if (nominee) {
           return respondUSSD(
             `Nominee: ${nominee.name}\n` +
-            `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+            `Price: ${formatGHS(votePrice)} / vote\n\n` +
             `Enter number of votes to cast:\n` +
-            `(e.g. 1, 5, 10, 20...)\n\n` +
+            `(e.g. 1, 5, 10, 20)\n\n` +
             `00. Back`,
             true,
             {
@@ -412,18 +504,13 @@ serve(async (req) => {
     const currentStep = sessionState.current_step;
     const userInput = cleanInput;
 
-    // Global back to main menu
-    if (userInput === "00" && (currentStep === "ENTER_CODE" || currentStep === "BROWSE_CATEGORIES" || currentStep === "INFO" || currentStep === "STANDINGS")) {
-      return renderMainMenu();
-    }
-
     // =========================================================================
-    // Step 1: MAIN_MENU Selection
+    // Step 1: MAIN_MENU
     // =========================================================================
     if (currentStep === "MAIN_MENU") {
       if (userInput === "1") {
         return respondUSSD(
-          "Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103...)\n\n00. Back to Main Menu",
+          "Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103)\n\n00. Main Menu",
           true,
           {
             ...sessionState,
@@ -433,7 +520,6 @@ serve(async (req) => {
       }
 
       if (/^\d{3,4}$/.test(userInput)) {
-        // Direct candidate code from menu
         const { data: nominee } = await supabase
           .from("nominees")
           .select("id, name, nominee_code, category_id, votes_count")
@@ -443,9 +529,9 @@ serve(async (req) => {
         if (nominee) {
           return respondUSSD(
             `Nominee: ${nominee.name}\n` +
-            `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+            `Price: ${formatGHS(votePrice)} / vote\n\n` +
             `Enter number of votes to cast:\n` +
-            `(e.g. 1, 5, 10, 20...)\n\n` +
+            `(e.g. 1, 5, 10, 20)\n\n` +
             `00. Back`,
             true,
             {
@@ -469,7 +555,6 @@ serve(async (req) => {
       }
 
       if (userInput === "2") {
-        // Browse Categories (Page 1)
         const { data: allCategories = [] } = await supabase
           .from("award_categories")
           .select("id, title, display_order")
@@ -497,13 +582,12 @@ serve(async (req) => {
       }
 
       if (userInput === "3") {
-        // Pricing & Info
         return respondUSSD(
           "ABCOSSA Dinner Awards '26\n\n" +
-          `• Rate: ${formatGHS(votePrice)} per vote\n` +
-          "• Networks: MTN, Telecel, AT\n" +
-          "• Fast Dial: *928*667*Code#\n" +
-          "• Portal: https://abcossa.org\n\n" +
+          `Price: ${formatGHS(votePrice)} per vote\n` +
+          "Networks: MTN, Telecel, AT\n" +
+          "Fast Dial: *928*667*Code#\n" +
+          "Portal: https://abcossa.org\n\n" +
           "00. Main Menu",
           true,
           {
@@ -514,7 +598,6 @@ serve(async (req) => {
       }
 
       if (userInput === "4") {
-        // Top 4 Standings
         const { data: topNominees = [] } = await supabase
           .from("nominees")
           .select("name, votes_count, nominee_code")
@@ -534,12 +617,11 @@ serve(async (req) => {
         });
       }
 
-      // Default invalid input on main menu
       return renderMainMenu();
     }
 
     // =========================================================================
-    // Step 2: ENTER_CODE (User is typing candidate code)
+    // Step 2: ENTER_CODE
     // =========================================================================
     if (currentStep === "ENTER_CODE") {
       if (userInput === "00") {
@@ -555,7 +637,7 @@ serve(async (req) => {
 
       if (findErr || !nominee) {
         return respondUSSD(
-          `Candidate Code "${candidateCode}" not found.\n\nPlease check the code and try again (e.g. 101, 102...):\n\n00. Main Menu`,
+          `Candidate Code "${candidateCode}" not found.\n\nPlease check the code and try again (e.g. 101, 102):\n\n00. Main Menu`,
           true,
           {
             ...sessionState,
@@ -564,12 +646,11 @@ serve(async (req) => {
         );
       }
 
-      // Nominee found -> Prompt for number of votes
       return respondUSSD(
         `Nominee: ${nominee.name}\n` +
-        `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+        `Price: ${formatGHS(votePrice)} / vote\n\n` +
         `Enter number of votes to cast:\n` +
-        `(e.g. 1, 5, 10, 20...)\n\n` +
+        `(e.g. 1, 5, 10, 20)\n\n` +
         `00. Back`,
         true,
         {
@@ -583,12 +664,12 @@ serve(async (req) => {
     }
 
     // =========================================================================
-    // Step 3: ENTER_VOTES (User is typing number of votes)
+    // Step 3: ENTER_VOTES -> SELECT_NETWORK
     // =========================================================================
     if (currentStep === "ENTER_VOTES") {
       if (userInput === "00") {
         return respondUSSD(
-          "Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103...)\n\n00. Back to Main Menu",
+          "Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103)\n\n00. Main Menu",
           true,
           {
             ...sessionState,
@@ -610,42 +691,227 @@ serve(async (req) => {
       }
 
       const totalAmount = voteCount * votePrice;
-      const nomineeName = sessionState.nominee_name || "Selected Candidate";
-      const code = sessionState.candidate_code || "";
+      const nomineeName = sessionState.nominee_name || "Nominee";
 
-      // Move to Confirmation step
+      // Move to Network selection step
       return respondUSSD(
-        `Confirm Vote for:\n` +
-        `• ${nomineeName} (#${code})\n` +
-        `• Quantity: ${voteCount} Vote${voteCount > 1 ? "s" : ""}\n` +
-        `• Total Amount: ${formatGHS(totalAmount)}\n\n` +
-        `1. Confirm & Pay via MoMo\n` +
-        `2. Cancel\n\n` +
+        `Nominee: ${nomineeName}\n` +
+        `Votes: ${voteCount} (${formatGHS(totalAmount)})\n\n` +
+        `Select Payment Network:\n` +
+        `1. MTN Mobile Money\n` +
+        `2. Telecel Cash\n` +
+        `3. AT Money\n\n` +
         `00. Back`,
         true,
         {
           ...sessionState,
-          current_step: "CONFIRM_VOTE",
+          current_step: "SELECT_NETWORK",
           quantity: voteCount,
         }
       );
     }
 
     // =========================================================================
-    // Step 4: CONFIRM_VOTE (User confirms payment)
+    // Step 4: SELECT_NETWORK -> CONFIRM_PHONE
     // =========================================================================
-    if (currentStep === "CONFIRM_VOTE") {
+    if (currentStep === "SELECT_NETWORK") {
       if (userInput === "00") {
         return respondUSSD(
           `Nominee: ${sessionState.nominee_name}\n` +
-          `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+          `Price: ${formatGHS(votePrice)} / vote\n\n` +
           `Enter number of votes to cast:\n` +
-          `(e.g. 1, 5, 10, 20...)\n\n` +
+          `(e.g. 1, 5, 10, 20)\n\n` +
           `00. Back`,
           true,
           {
             ...sessionState,
             current_step: "ENTER_VOTES",
+          }
+        );
+      }
+
+      let networkName = "MTN";
+      if (userInput === "1") networkName = "MTN";
+      else if (userInput === "2") networkName = "Telecel";
+      else if (userInput === "3") networkName = "AT";
+      else {
+        return respondUSSD(
+          `Invalid network option.\n\n` +
+          `Select Payment Network:\n` +
+          `1. MTN Mobile Money\n` +
+          `2. Telecel Cash\n` +
+          `3. AT Money\n\n` +
+          `00. Back`,
+          true,
+          {
+            ...sessionState,
+            current_step: "SELECT_NETWORK",
+          }
+        );
+      }
+
+      const displayPhone = phoneInfo.local || userId;
+
+      return respondUSSD(
+        `Network: ${networkName} MoMo\n\n` +
+        `Pay with this number (${displayPhone})?\n` +
+        `1. Yes, use this number\n` +
+        `2. No, use other wallet\n\n` +
+        `00. Back`,
+        true,
+        {
+          ...sessionState,
+          current_step: "CONFIRM_PHONE",
+          network: networkName,
+        }
+      );
+    }
+
+    // =========================================================================
+    // Step 5: CONFIRM_PHONE
+    // =========================================================================
+    if (currentStep === "CONFIRM_PHONE") {
+      if (userInput === "00") {
+        return respondUSSD(
+          `Select Payment Network:\n` +
+          `1. MTN Mobile Money\n` +
+          `2. Telecel Cash\n` +
+          `3. AT Money\n\n` +
+          `00. Back`,
+          true,
+          {
+            ...sessionState,
+            current_step: "SELECT_NETWORK",
+          }
+        );
+      }
+
+      if (userInput === "1") {
+        // Use active phone number
+        const walletPhone = phoneInfo.local || userId;
+        const voteCount = sessionState.quantity || 1;
+        const totalAmount = voteCount * votePrice;
+        const nomineeName = sessionState.nominee_name || "Nominee";
+        const code = sessionState.candidate_code || "";
+        const netName = sessionState.network || "MTN";
+
+        return respondUSSD(
+          `Vote Summary:\n` +
+          `- Nominee: ${nomineeName} (${code})\n` +
+          `- Quantity: ${voteCount} vote(s)\n` +
+          `- Total: ${formatGHS(totalAmount)}\n` +
+          `- Network: ${netName} MoMo\n` +
+          `- Wallet: ${walletPhone}\n\n` +
+          `1. Authorize & Pay\n` +
+          `2. Cancel\n\n` +
+          `00. Back`,
+          true,
+          {
+            ...sessionState,
+            current_step: "CONFIRM_VOTE",
+            wallet_phone: walletPhone,
+          }
+        );
+      }
+
+      if (userInput === "2") {
+        // User wants to type a different wallet number
+        return respondUSSD(
+          `Enter 10-digit MoMo Number:\n` +
+          `(e.g. 0241234567)\n\n` +
+          `00. Back`,
+          true,
+          {
+            ...sessionState,
+            current_step: "ENTER_PHONE",
+          }
+        );
+      }
+
+      return respondUSSD(
+        `Please select an option:\n` +
+        `1. Yes, use this number (${phoneInfo.local})\n` +
+        `2. No, use other wallet\n\n` +
+        `00. Back`,
+        true,
+        {
+          ...sessionState,
+          current_step: "CONFIRM_PHONE",
+        }
+      );
+    }
+
+    // =========================================================================
+    // Step 6: ENTER_PHONE
+    // =========================================================================
+    if (currentStep === "ENTER_PHONE") {
+      if (userInput === "00") {
+        return respondUSSD(
+          `Pay with this number (${phoneInfo.local})?\n` +
+          `1. Yes, use this number\n` +
+          `2. No, use other wallet\n\n` +
+          `00. Back`,
+          true,
+          {
+            ...sessionState,
+            current_step: "CONFIRM_PHONE",
+          }
+        );
+      }
+
+      const inputPhone = userInput.replace(/[^\d]/g, "");
+      if (inputPhone.length < 9 || inputPhone.length > 12) {
+        return respondUSSD(
+          `Invalid phone number. Please enter a 10-digit MoMo number (e.g. 0241234567):\n\n00. Back`,
+          true,
+          {
+            ...sessionState,
+            current_step: "ENTER_PHONE",
+          }
+        );
+      }
+
+      const walletPhone = inputPhone.startsWith("233") ? `0${inputPhone.slice(3)}` : inputPhone;
+      const voteCount = sessionState.quantity || 1;
+      const totalAmount = voteCount * votePrice;
+      const nomineeName = sessionState.nominee_name || "Nominee";
+      const code = sessionState.candidate_code || "";
+      const netName = sessionState.network || "MTN";
+
+      return respondUSSD(
+        `Vote Summary:\n` +
+        `- Nominee: ${nomineeName} (${code})\n` +
+        `- Quantity: ${voteCount} vote(s)\n` +
+        `- Total: ${formatGHS(totalAmount)}\n` +
+        `- Network: ${netName} MoMo\n` +
+        `- Wallet: ${walletPhone}\n\n` +
+        `1. Authorize & Pay\n` +
+        `2. Cancel\n\n` +
+        `00. Back`,
+        true,
+        {
+          ...sessionState,
+          current_step: "CONFIRM_VOTE",
+          wallet_phone: walletPhone,
+        }
+      );
+    }
+
+    // =========================================================================
+    // Step 7: CONFIRM_VOTE -> Initiate Payment Push
+    // =========================================================================
+    if (currentStep === "CONFIRM_VOTE") {
+      if (userInput === "00") {
+        return respondUSSD(
+          `Select Payment Network:\n` +
+          `1. MTN Mobile Money\n` +
+          `2. Telecel Cash\n` +
+          `3. AT Money\n\n` +
+          `00. Back`,
+          true,
+          {
+            ...sessionState,
+            current_step: "SELECT_NETWORK",
           }
         );
       }
@@ -656,8 +922,22 @@ serve(async (req) => {
         const nomineeId = sessionState.nominee_id;
         const candidateCode = sessionState.candidate_code || "";
         const nomineeName = sessionState.nominee_name || "Nominee";
+        const network = sessionState.network || "MTN";
+        const walletPhone = sessionState.wallet_phone || phoneInfo.local || userId;
+        const trxRef = `USSD_${Date.now().toString().slice(-8)}`;
 
-        // Record votes & payment
+        // 1. Trigger MoMo Payment API push to subscriber
+        await triggerMoMoPayment({
+          amount: totalAmount,
+          phone: walletPhone,
+          network: network,
+          reference: trxRef,
+          nomineeName: nomineeName,
+          votesCount: voteCount,
+          supabase: supabase,
+        });
+
+        // 2. Record vote & payment in Supabase
         if (nomineeId) {
           const { data: nomRow } = await supabase
             .from("nominees")
@@ -669,33 +949,35 @@ serve(async (req) => {
           await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
         }
 
-        const trxRef = `USSD_${Date.now().toString().slice(-8)}`;
         await supabase.from("payments").insert({
           client_reference: trxRef,
           transaction_id: trxRef,
           amount: totalAmount,
           currency: "GHS",
-          customer_name: `USSD Voter (${userId})`,
+          customer_name: `USSD Voter (${walletPhone})`,
           customer_email: "ussd-voting@abcossa.org",
-          customer_phone: userId,
+          customer_phone: walletPhone,
           payment_type: "voting",
-          status: "paid",
-          payment_channel: "ussd-arkesel",
-          description: `Arkesel USSD Vote for ${nomineeName} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
+          status: "pending",
+          payment_channel: `ussd-${network.toLowerCase()}`,
+          description: `USSD Vote for ${nomineeName} (${voteCount} vote(s)) via ${network}`,
           metadata: {
             nominee_id: nomineeId,
             nominee_code: candidateCode,
             nominee_name: nomineeName,
             votes_count: voteCount,
+            network: network,
+            wallet_phone: walletPhone,
             session_id: sessionId,
             gateway: "arkesel",
           },
         });
 
+        // 3. Return final prompt and end session so phone displays network PIN popup
         return respondUSSD(
           `Payment Request Sent!\n\n` +
-          `You requested ${voteCount} vote(s) for ${nomineeName} (${formatGHS(totalAmount)}).\n\n` +
-          `Please authorize the Mobile Money PIN prompt on your phone.\n\n` +
+          `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\n\n` +
+          `Please enter your Mobile Money PIN when prompted to approve the vote.\n\n` +
           `Thank you for supporting ABCOSSA!`,
           false
         );
@@ -705,7 +987,7 @@ serve(async (req) => {
     }
 
     // =========================================================================
-    // Step 5: BROWSE_CATEGORIES (Directory Browsing)
+    // Step 8: BROWSE_CATEGORIES
     // =========================================================================
     if (currentStep === "BROWSE_CATEGORIES") {
       if (userInput === "00") {
@@ -733,7 +1015,6 @@ serve(async (req) => {
         const selectedCat = categories[startIdx + (selectedNum - 1)] || categories[selectedNum - 1];
 
         if (selectedCat) {
-          // Selected a valid category -> Fetch its nominees (Page 1)
           const { data: allNominees = [] } = await supabase
             .from("nominees")
             .select("id, name, nominee_code")
@@ -775,7 +1056,6 @@ serve(async (req) => {
         }
       }
 
-      // Re-render categories page after 99 / 88 navigation
       const startIdx = (currentCatPage - 1) * catPageSize;
       const pageCats = categories.slice(startIdx, startIdx + catPageSize);
 
@@ -796,11 +1076,10 @@ serve(async (req) => {
     }
 
     // =========================================================================
-    // Step 6: BROWSE_NOMINEES (Nominees in Category Browsing)
+    // Step 9: BROWSE_NOMINEES
     // =========================================================================
     if (currentStep === "BROWSE_NOMINEES") {
       if (userInput === "00") {
-        // Back to categories
         const { data: allCategories = [] } = await supabase
           .from("award_categories")
           .select("id, title, display_order")
@@ -847,7 +1126,6 @@ serve(async (req) => {
       } else if (userInput === "88") {
         currentNomPage = Math.max(1, currentNomPage - 1);
       } else {
-        // Match by nominee code (e.g. 101) or page selection number (1, 2, 3...)
         const codeMatch = catNominees.find((n) => n.nominee_code === userInput);
         const startIdx = (currentNomPage - 1) * nomPageSize;
         const numMatch = catNominees[startIdx + (parseInt(userInput, 10) - 1)];
@@ -856,9 +1134,9 @@ serve(async (req) => {
         if (selectedNominee) {
           return respondUSSD(
             `Nominee: ${selectedNominee.name}\n` +
-            `Rate: ${formatGHS(votePrice)} / vote\n\n` +
+            `Price: ${formatGHS(votePrice)} / vote\n\n` +
             `Enter number of votes to cast:\n` +
-            `(e.g. 1, 5, 10, 20...)\n\n` +
+            `(e.g. 1, 5, 10, 20)\n\n` +
             `00. Back`,
             true,
             {
@@ -872,7 +1150,6 @@ serve(async (req) => {
         }
       }
 
-      // Re-render nominees page after 99 / 88 navigation
       const startIdx = (currentNomPage - 1) * nomPageSize;
       const pageNominees = catNominees.slice(startIdx, startIdx + nomPageSize);
       const catTitle = sessionState.category_title || "Category";
@@ -893,12 +1170,10 @@ serve(async (req) => {
       });
     }
 
-    // Info or Standings -> any input returns to main menu
     if (currentStep === "INFO" || currentStep === "STANDINGS") {
       return renderMainMenu();
     }
 
-    // Fallback: render main menu
     return renderMainMenu();
   } catch (error) {
     console.error("Fatal error in Arkesel USSD webhook:", error);

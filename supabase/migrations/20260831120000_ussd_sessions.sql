@@ -11,6 +11,8 @@ create table if not exists public.ussd_sessions (
   category_page integer not null default 1,
   nominee_page integer not null default 1,
   quantity integer not null default 1,
+  network text,
+  wallet_phone text,
   metadata jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
