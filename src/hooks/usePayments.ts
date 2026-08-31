@@ -325,7 +325,103 @@ export function useClearPendingPayments() {
   });
 }
 
+export interface VerificationResult {
+  reference: string;
+  success: boolean;
+  status: string;
+  message: string;
+  votesCredited?: boolean;
+  votesCount?: number;
+}
+
+export function useVerifyPaystackPayment() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (reference: string): Promise<VerificationResult> => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      const { data, error } = await supabase.functions.invoke("paystack-verify", {
+        body: { reference: reference.trim() },
+      });
+
+      if (error) throw error;
+      return {
+        reference,
+        success: Boolean(data?.success),
+        status: data?.status || "unknown",
+        message: data?.message || "Verification finished",
+        votesCredited: data?.votesCredited,
+        votesCount: data?.votesCount,
+      };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+    },
+  });
+}
+
+export function useReconcilePendingPayments() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (paymentsToVerify: PaymentRecord[]): Promise<{
+      total: number;
+      paidCount: number;
+      failedCount: number;
+      unverifiedCount: number;
+      votesCreditedTotal: number;
+    }> => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      let paidCount = 0;
+      let failedCount = 0;
+      let unverifiedCount = 0;
+      let votesCreditedTotal = 0;
+
+      for (const p of paymentsToVerify) {
+        try {
+          const { data, error } = await supabase.functions.invoke("paystack-verify", {
+            body: { reference: p.client_reference.trim() },
+          });
+
+          if (!error && data?.success) {
+            if (data.status === "paid") {
+              paidCount++;
+              if (data.votesCredited && data.votesCount) {
+                votesCreditedTotal += Number(data.votesCount);
+              }
+            } else if (data.status === "failed" || data.status === "cancelled") {
+              failedCount++;
+            }
+          } else {
+            unverifiedCount++;
+          }
+        } catch (_) {
+          unverifiedCount++;
+        }
+      }
+
+      return {
+        total: paymentsToVerify.length,
+        paidCount,
+        failedCount,
+        unverifiedCount,
+        votesCreditedTotal,
+      };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+    },
+  });
+}
+
 // Backward compatibility wrappers
 export const useHubtelSettings = usePaystackSettings;
 export const useUpdateHubtelSettings = useUpdatePaystackSettings;
+
 

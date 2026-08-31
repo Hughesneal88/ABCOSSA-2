@@ -58,6 +58,8 @@ import {
   useDeletePayment,
   useDeleteMultiplePayments,
   useClearPendingPayments,
+  useVerifyPaystackPayment,
+  useReconcilePendingPayments,
 } from "@/hooks/usePayments";
 import {
   Dialog,
@@ -5026,6 +5028,8 @@ function PaymentsAdminPanel() {
   const deletePaymentMutation = useDeletePayment();
   const deleteMultipleMutation = useDeleteMultiplePayments();
   const clearPendingMutation = useClearPendingPayments();
+  const verifyPaymentMutation = useVerifyPaystackPayment();
+  const reconcileMutation = useReconcilePendingPayments();
 
   const [publicKey, setPublicKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
@@ -5043,6 +5047,7 @@ function PaymentsAdminPanel() {
   const [deductVotesOnDelete, setDeductVotesOnDelete] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
+  const [verifyingRef, setVerifyingRef] = useState<string | null>(null);
 
   useEffect(() => {
     if (paystackSettings && !settingsInitialized) {
@@ -5156,6 +5161,56 @@ function PaymentsAdminPanel() {
         },
       }
     );
+  };
+
+  const handleVerifySingle = (payment: PaymentRecord, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setVerifyingRef(payment.client_reference);
+
+    verifyPaymentMutation.mutate(payment.client_reference, {
+      onSuccess: (res) => {
+        if (res.success && res.status === "paid") {
+          toast.success(`Verified as PAID on Paystack!${res.votesCredited ? ` Credited ${res.votesCount} votes.` : ""}`);
+          if (selectedPayment?.id === payment.id) {
+            setSelectedPayment((prev) => (prev ? { ...prev, status: "paid" } : null));
+          }
+        } else if (res.status === "failed") {
+          toast.info(`Paystack reports transaction was FAILED / Cancelled.`);
+          if (selectedPayment?.id === payment.id) {
+            setSelectedPayment((prev) => (prev ? { ...prev, status: "failed" } : null));
+          }
+        } else {
+          toast.warning(res.message || "Transaction not found on Paystack or still pending authorization.");
+        }
+      },
+      onError: (err) => {
+        toast.error(err instanceof Error ? err.message : "Verification request failed");
+      },
+      onSettled: () => {
+        setVerifyingRef(null);
+      },
+    });
+  };
+
+  const handleReconcilePending = () => {
+    const pendingList = payments.filter((p) => p.status === "pending");
+    if (pendingList.length === 0) {
+      toast.info("No pending transactions to reconcile.");
+      return;
+    }
+
+    toast.info(`Reconciling ${pendingList.length} pending transaction(s) with Paystack...`);
+    reconcileMutation.mutate(pendingList, {
+      onSuccess: (res) => {
+        toast.success(
+          `Reconciliation complete: Verified ${res.paidCount} as Paid (${res.votesCreditedTotal} votes credited), ` +
+          `${res.failedCount} marked Failed, ${res.unverifiedCount} remained pending.`
+        );
+      },
+      onError: (err) => {
+        toast.error(err instanceof Error ? err.message : "Reconciliation failed");
+      },
+    });
   };
 
   const handleDeleteSingle = async (p: PaymentRecord, deduct: boolean, e?: React.MouseEvent) => {
@@ -5281,7 +5336,7 @@ function PaymentsAdminPanel() {
                   value={secretKey}
                   onChange={(e) => setSecretKey(e.target.value)}
                 />
-                <p className="text-[11px] text-muted-foreground mt-1">Required to trigger automated Mobile Money PIN prompt pushes.</p>
+                <p className="text-[11px] text-muted-foreground mt-1">Required to trigger automated Mobile Money PIN prompt pushes and verify transactions.</p>
               </div>
 
               <div>
@@ -5360,11 +5415,29 @@ function PaymentsAdminPanel() {
           <div>
             <h3 className="text-lg font-bold text-foreground">Transaction Logs ({filteredPayments.length})</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Click on any transaction row to inspect details, switch status (Paid / Pending / Failed), or delete test logs.
+              Click on any transaction row to inspect details, verify against Paystack, switch status, or delete test logs.
             </p>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Reconcile with Paystack Button */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={reconcileMutation.isPending || pendingCount === 0}
+              onClick={handleReconcilePending}
+              className="text-xs font-semibold gap-1.5 h-8 text-primary border-primary/30 hover:bg-primary/10"
+              title="Query Paystack API to verify actual payment status for all pending transactions"
+            >
+              {reconcileMutation.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Check className="w-3.5 h-3.5" />
+              )}
+              Reconcile Pending with Paystack ({pendingCount})
+            </Button>
+
             {selectedIds.size > 0 && (
               <Button
                 type="button"
@@ -5397,7 +5470,7 @@ function PaymentsAdminPanel() {
               ) : (
                 <RotateCcw className="w-3.5 h-3.5" />
               )}
-              Clear Test / Pending Logs ({pendingCount + failedCount})
+              Clear Test Logs ({pendingCount + failedCount})
             </Button>
           </div>
         </div>
@@ -5531,21 +5604,41 @@ function PaymentsAdminPanel() {
                       {new Date(p.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </td>
                     <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={deletingId === p.id}
-                        onClick={(e) => handleDeleteSingle(p, false, e)}
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                        title="Delete this log"
-                      >
-                        {deletingId === p.id ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-3.5 h-3.5" />
+                      <div className="flex items-center justify-end gap-1">
+                        {p.status === "pending" && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={verifyingRef === p.client_reference}
+                            onClick={(e) => handleVerifySingle(p, e)}
+                            className="h-7 px-2 text-[10px] text-primary hover:bg-primary/10 gap-1"
+                            title="Verify status on Paystack"
+                          >
+                            {verifyingRef === p.client_reference ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Check className="w-3 h-3" />
+                            )}
+                            Verify
+                          </Button>
                         )}
-                      </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={deletingId === p.id}
+                          onClick={(e) => handleDeleteSingle(p, false, e)}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          title="Delete this log"
+                        >
+                          {deletingId === p.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -5555,7 +5648,7 @@ function PaymentsAdminPanel() {
         )}
       </section>
 
-      {/* 4. Transaction Details Modal with Status Switcher */}
+      {/* 4. Transaction Details Modal with Status Switcher & Paystack Verify */}
       <Dialog open={Boolean(selectedPayment)} onOpenChange={(open) => !open && setSelectedPayment(null)}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           {selectedPayment && (
@@ -5584,15 +5677,25 @@ function PaymentsAdminPanel() {
               </DialogHeader>
 
               <div className="space-y-4 text-xs pt-2">
-                {/* Status Switcher Action Box */}
+                {/* Status Switcher & Paystack Verification Box */}
                 <div className="p-3 bg-muted/40 rounded-xl border border-border/60 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-foreground">Switch Payment Status</span>
-                    {updatingStatusId === selectedPayment.id && (
-                      <span className="text-[10px] text-primary flex items-center gap-1 font-semibold">
-                        <Loader2 className="w-3 h-3 animate-spin" /> Updating...
-                      </span>
-                    )}
+                    <span className="text-[11px] font-bold text-foreground">Payment Status & Verification</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={verifyingRef === selectedPayment.client_reference}
+                      onClick={() => handleVerifySingle(selectedPayment)}
+                      className="h-7 text-[10px] font-semibold gap-1 text-primary border-primary/30 hover:bg-primary/10"
+                    >
+                      {verifyingRef === selectedPayment.client_reference ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Check className="w-3 h-3" />
+                      )}
+                      Verify on Paystack
+                    </Button>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
                     <Button
@@ -5639,7 +5742,7 @@ function PaymentsAdminPanel() {
                     </Button>
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    Switching to <strong>Paid</strong> credits candidate votes in standings. Switching to <strong>Failed/Pending</strong> reverses the votes.
+                    Query Paystack to automatically verify if funds were settled, or manually switch status.
                   </p>
                 </div>
 
