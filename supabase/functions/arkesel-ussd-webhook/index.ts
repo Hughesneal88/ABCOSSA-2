@@ -539,12 +539,11 @@ serve(async (req) => {
     // Default main menu text
     const renderMainMenu = async () => {
       const menuText =
-        "Welcome to ABCOSSA Dinner Awards '26\n" +
-        "Celebrating Excellence\n\n" +
+        "ABCOSSA Awards 2026\n" +
         "1. Vote with Candidate Code\n" +
-        "2. Browse Award Categories\n" +
-        "3. View Pricing & Info\n" +
-        "4. Check Live Standings";
+        "2. Browse Categories\n" +
+        "3. Live Standings\n" +
+        "4. Event Info & Pricing";
 
       return respondUSSD(menuText, true, {
         current_step: "MAIN_MENU",
@@ -725,10 +724,9 @@ serve(async (req) => {
 
       if (userInput === "3") {
         return respondUSSD(
-          "ABCOSSA Dinner Awards '26\n\n" +
-          `Price: ${formatGHS(votePrice)} per vote\n` +
+          "ABCOSSA Awards 2026\n\n" +
+          `Rate: ${formatGHS(votePrice)} / vote\n` +
           "Networks: MTN, Telecel, AT\n" +
-          "Fast Dial: *928*667*Code#\n" +
           "Portal: https://abcossa.org\n\n" +
           "00. Main Menu",
           true,
@@ -1133,8 +1131,8 @@ serve(async (req) => {
 
         if (paymentResult.gateway === "unconfigured") {
           return respondUSSD(
-            "Payment Setup Required:\\n\\n" +
-            "Paystack Secret Key is not configured yet. Please add your Paystack Secret Key in Staff Portal Settings to send live MoMo PIN prompts.\\n\\n" +
+            "Payment Setup Notice:\n\n" +
+            "Paystack Live Key is not configured in Portal settings.\n\n" +
             "Thank you for supporting ABCOSSA!",
             false
           );
@@ -1143,23 +1141,24 @@ serve(async (req) => {
         if (!paymentResult.success) {
           const errMsg = paymentResult.result?.message || "Could not trigger network prompt.";
           return respondUSSD(
-            `Payment Notice:\\n\\n` +
-            `${errMsg}\\n\\n` +
-            `Phone: ${walletPhone}\\n` +
-            `Please check your Paystack settings or try again.`,
+            `Payment Notice:\n\n` +
+            `${errMsg}\n\n` +
+            `Phone: ${walletPhone}\n` +
+            `Please try again or check your wallet balance.`,
             false
           );
         }
 
         return respondUSSD(
-          `Payment Prompt Sent!\\n\\n` +
-          `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\\n\\n` +
-          `Please enter your MoMo PIN to authorize the payment.\\n` +
-          `(MTN: Also check *170# -> 6. Approvals if prompt does not appear automatically).`,
+          `Payment Prompt Sent!\n\n` +
+          `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\n\n` +
+          `Please enter your MoMo PIN to authorize payment.\n` +
+          `(MTN: Also check *170# -> 6. Approvals).\n\n` +
+          `Thank you for voting!`,
           false
         );
       } else {
-        return respondUSSD("Voting transaction cancelled.\\n\\nThank you for using ABCOSSA USSD.", false);
+        return respondUSSD("Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.", false);
       }
     }
 
