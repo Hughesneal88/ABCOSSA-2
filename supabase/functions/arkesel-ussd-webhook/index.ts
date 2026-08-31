@@ -22,9 +22,10 @@ interface UssdSessionState {
   network?: string | null;
   wallet_phone?: string | null;
   metadata?: Record<string, any>;
+  updated_at?: string;
 }
 
-// In-memory fallback cache in case ussd_sessions table is momentarily unreachable
+// In-memory fallback cache across warm isolate requests
 const inMemorySessions = new Map<string, UssdSessionState>();
 
 function normalizePhone(rawPhone: string) {
@@ -63,22 +64,22 @@ async function triggerMoMoPayment(params: {
     .from("site_settings")
     .select("key, value")
     .in("key", [
+      "paystack_secret_key",
       "arkesel_api_key",
       "hubtel_client_id",
       "hubtel_client_secret",
-      "hubtel_merchant_account_number",
-      "paystack_secret_key"
+      "hubtel_merchant_account_number"
     ]);
 
   const settings: Record<string, string> = Object.fromEntries(
     (settingsRows || []).map((r: { key: string; value: string }) => [r.key, r.value])
   );
 
+  const paystackKey = settings["paystack_secret_key"] || Deno.env.get("PAYSTACK_SECRET_KEY") || "";
   const arkeselKey = settings["arkesel_api_key"] || Deno.env.get("ARKESEL_API_KEY") || "";
   const hubtelClientId = settings["hubtel_client_id"] || Deno.env.get("HUBTEL_CLIENT_ID") || "";
   const hubtelSecret = settings["hubtel_client_secret"] || Deno.env.get("HUBTEL_CLIENT_SECRET") || "";
   const hubtelMerchant = settings["hubtel_merchant_account_number"] || Deno.env.get("HUBTEL_MERCHANT_ACCOUNT_NUMBER") || "2019842";
-  const paystackKey = settings["paystack_secret_key"] || Deno.env.get("PAYSTACK_SECRET_KEY") || "";
 
   // 1. Prioritize Paystack MoMo Charge API if Paystack secret key is configured
   if (paystackKey) {
@@ -195,7 +196,7 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Parse incoming parameters
+    // 1. Parse incoming parameters
     let payload: Record<string, any> = {};
 
     if (req.method === "GET") {
@@ -263,6 +264,48 @@ serve(async (req) => {
 
     const phoneInfo = normalizePhone(userId);
 
+    // Save session helper across Multi-Tier storage
+    const saveSession = async (state: UssdSessionState) => {
+      // 1. In-memory
+      inMemorySessions.set(sessionId, state);
+      inMemorySessions.set(userId, state);
+
+      // 2. ussd_sessions table
+      try {
+        await supabase.from("ussd_sessions").upsert(
+          {
+            ...state,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "session_id" }
+        );
+      } catch (e) {
+        console.warn("ussd_sessions upsert:", e);
+      }
+
+      // 3. Persistent fallback in site_settings (always exists in Supabase!)
+      try {
+        await supabase.from("site_settings").upsert(
+          [
+            { key: `ussd_sess_${sessionId}`, value: JSON.stringify(state) },
+            { key: `ussd_user_${userId}`, value: JSON.stringify(state) },
+          ],
+          { onConflict: "key" }
+        );
+      } catch (_) {}
+    };
+
+    const clearSession = async () => {
+      inMemorySessions.delete(sessionId);
+      inMemorySessions.delete(userId);
+      try {
+        await supabase.from("ussd_sessions").delete().eq("session_id", sessionId);
+      } catch (_) {}
+      try {
+        await supabase.from("site_settings").delete().in("key", [`ussd_sess_${sessionId}`, `ussd_user_${userId}`]);
+      } catch (_) {}
+    };
+
     // Helper for responding in Arkesel standard USSD format
     const respondUSSD = async (message: string, continueSession = true, nextState?: Partial<UssdSessionState>) => {
       if (nextState) {
@@ -281,28 +324,14 @@ serve(async (req) => {
           network: nextState.network ?? null,
           wallet_phone: nextState.wallet_phone ?? null,
           metadata: nextState.metadata ?? {},
+          updated_at: new Date().toISOString(),
         };
 
-        inMemorySessions.set(sessionId, updatedState);
-
-        try {
-          await supabase.from("ussd_sessions").upsert(
-            {
-              ...updatedState,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "session_id" }
-          );
-        } catch (e) {
-          console.warn("Could not upsert ussd_session:", e);
-        }
+        await saveSession(updatedState);
       }
 
       if (!continueSession) {
-        inMemorySessions.delete(sessionId);
-        try {
-          await supabase.from("ussd_sessions").delete().eq("session_id", sessionId);
-        } catch (_) {}
+        await clearSession();
       }
 
       return new Response(
@@ -322,7 +351,7 @@ serve(async (req) => {
       );
     };
 
-    // Helper to format currency
+    // Helper to format currency safely
     const formatGHS = (val: number) => {
       const num = Number(val);
       const safe = isNaN(num) ? 1.0 : num;
@@ -412,14 +441,11 @@ serve(async (req) => {
     }
 
     // =========================================================================
-    // B. Interactive USSD Session Flow & State Machine
+    // B. Interactive USSD Session Flow & Multi-Tier State Recovery
     // =========================================================================
 
     if (sessionType.toLowerCase() === "release" || sessionType.toLowerCase() === "timeout") {
-      inMemorySessions.delete(sessionId);
-      try {
-        await supabase.from("ussd_sessions").delete().eq("session_id", sessionId);
-      } catch (_) {}
+      await clearSession();
       return respondUSSD("Session ended", false);
     }
 
@@ -436,19 +462,42 @@ serve(async (req) => {
       cleanInput = "";
     }
 
-    // Load active session state from database / memory
-    let sessionState: UssdSessionState | null = inMemorySessions.get(sessionId) || null;
+    // Multi-tier session lookup
+    let sessionState: UssdSessionState | null =
+      inMemorySessions.get(sessionId) || inMemorySessions.get(userId) || null;
+
     if (!sessionState) {
       try {
         const { data: dbSession } = await supabase
           .from("ussd_sessions")
           .select("*")
-          .eq("session_id", sessionId)
+          .or(`session_id.eq.${sessionId},user_id.eq.${userId}`)
+          .order("updated_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
 
         if (dbSession) {
           sessionState = dbSession as UssdSessionState;
           inMemorySessions.set(sessionId, sessionState);
+          inMemorySessions.set(userId, sessionState);
+        }
+      } catch (_) {}
+    }
+
+    if (!sessionState) {
+      try {
+        const { data: fallbackRows } = await supabase
+          .from("site_settings")
+          .select("key, value")
+          .in("key", [`ussd_sess_${sessionId}`, `ussd_user_${userId}`]);
+
+        if (fallbackRows && fallbackRows.length > 0) {
+          const val = fallbackRows[0].value;
+          if (val) {
+            sessionState = JSON.parse(val) as UssdSessionState;
+            inMemorySessions.set(sessionId, sessionState);
+            inMemorySessions.set(userId, sessionState);
+          }
         }
       } catch (_) {}
     }
@@ -475,39 +524,95 @@ serve(async (req) => {
     };
 
     // -------------------------------------------------------------------------
-    // Step 0: Session Initiation
+    // Shortcut / Fast-Dial (e.g. *928*667*101# or *928*667*101*5#)
     // -------------------------------------------------------------------------
-    if (sessionType.toLowerCase() === "initiation" || !cleanInput || !sessionState) {
-      if (/^\d{3,4}$/.test(cleanInput)) {
+    if (cleanInput.includes("*")) {
+      const parts = cleanInput.split("*").map((s) => s.trim()).filter(Boolean);
+      const candidateCode = parts[0] === "1" ? parts[1] : parts[0];
+      const qtyStr = parts[0] === "1" ? parts[2] : parts[1];
+
+      if (candidateCode) {
         const { data: nominee } = await supabase
           .from("nominees")
           .select("id, name, nominee_code, category_id, votes_count")
-          .eq("nominee_code", cleanInput)
+          .eq("nominee_code", candidateCode)
           .maybeSingle();
 
         if (nominee) {
-          return respondUSSD(
-            `Nominee: ${nominee.name}\n` +
-            `Price: ${formatGHS(votePrice)} / vote\n\n` +
-            `Enter number of votes to cast:\n` +
-            `(e.g. 1, 5, 10, 20)\n\n` +
-            `00. Back`,
-            true,
-            {
-              current_step: "ENTER_VOTES",
-              candidate_code: nominee.nominee_code,
-              nominee_id: nominee.id,
-              nominee_name: nominee.name,
-            }
-          );
+          if (!qtyStr) {
+            return respondUSSD(
+              `Nominee: ${nominee.name}\n` +
+              `Price: ${formatGHS(votePrice)} / vote\n\n` +
+              `Enter number of votes to cast:\n` +
+              `(e.g. 1, 5, 10, 20)\n\n` +
+              `00. Back`,
+              true,
+              {
+                current_step: "ENTER_VOTES",
+                candidate_code: nominee.nominee_code,
+                nominee_id: nominee.id,
+                nominee_name: nominee.name,
+              }
+            );
+          } else {
+            const voteCount = Math.max(1, parseInt(qtyStr, 10) || 1);
+            const totalAmount = voteCount * votePrice;
+
+            return respondUSSD(
+              `Nominee: ${nominee.name}\n` +
+              `Votes: ${voteCount} (${formatGHS(totalAmount)})\n\n` +
+              `Select Payment Network:\n` +
+              `1. MTN Mobile Money\n` +
+              `2. Telecel Cash\n` +
+              `3. AT Money\n\n` +
+              `00. Back`,
+              true,
+              {
+                current_step: "SELECT_NETWORK",
+                candidate_code: nominee.nominee_code,
+                nominee_id: nominee.id,
+                nominee_name: nominee.name,
+                quantity: voteCount,
+              }
+            );
+          }
         }
       }
+    }
 
+    // -------------------------------------------------------------------------
+    // Session Initiation Check
+    // -------------------------------------------------------------------------
+    const isFirstTurn = sessionType.toLowerCase() === "initiation" || cleanInput === "";
+
+    if (isFirstTurn) {
       return renderMainMenu();
     }
 
-    const currentStep = sessionState.current_step;
+    // Determine current step with Smart State Fallback
+    let currentStep = sessionState?.current_step || "MAIN_MENU";
     const userInput = cleanInput;
+
+    // Smart Fallback if session state was lost:
+    if (!sessionState || currentStep === "MAIN_MENU") {
+      if (userInput === "1") {
+        currentStep = "MAIN_MENU"; // Will process userInput '1' -> ENTER_CODE
+      } else if (userInput === "2") {
+        currentStep = "MAIN_MENU"; // Will process userInput '2' -> BROWSE_CATEGORIES
+      } else if (userInput === "3") {
+        currentStep = "MAIN_MENU"; // Will process userInput '3' -> INFO
+      } else if (userInput === "4") {
+        currentStep = "MAIN_MENU"; // Will process userInput '4' -> STANDINGS
+      } else if (/^\d{3,4}$/.test(userInput)) {
+        // Direct candidate code
+        currentStep = "ENTER_CODE";
+      }
+    }
+
+    // Global back to main menu
+    if (userInput === "00" && (currentStep === "ENTER_CODE" || currentStep === "BROWSE_CATEGORIES" || currentStep === "INFO" || currentStep === "STANDINGS")) {
+      return renderMainMenu();
+    }
 
     // =========================================================================
     // Step 1: MAIN_MENU
@@ -518,7 +623,7 @@ serve(async (req) => {
           "Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103)\n\n00. Main Menu",
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "ENTER_CODE",
           }
         );
@@ -540,7 +645,7 @@ serve(async (req) => {
             `00. Back`,
             true,
             {
-              ...sessionState,
+              ...(sessionState || {}),
               current_step: "ENTER_VOTES",
               candidate_code: nominee.nominee_code,
               nominee_id: nominee.id,
@@ -552,7 +657,7 @@ serve(async (req) => {
             `Candidate Code "${userInput}" was not found.\n\nPlease enter a valid 3-digit code:\n\n00. Back`,
             true,
             {
-              ...sessionState,
+              ...(sessionState || {}),
               current_step: "ENTER_CODE",
             }
           );
@@ -580,7 +685,7 @@ serve(async (req) => {
         catMenu += "00. Main Menu";
 
         return respondUSSD(catMenu.trim(), true, {
-          ...sessionState,
+          ...(sessionState || {}),
           current_step: "BROWSE_CATEGORIES",
           category_page: 1,
         });
@@ -590,13 +695,13 @@ serve(async (req) => {
         return respondUSSD(
           "ABCOSSA Dinner Awards '26\n\n" +
           `Price: ${formatGHS(votePrice)} per vote\n` +
-          "Networks: MTN, Telecel, AT\n" +
+          "Networks: MTN, Telecel, AT\n`" +
           "Fast Dial: *928*667*Code#\n" +
           "Portal: https://abcossa.org\n\n" +
           "00. Main Menu",
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "INFO",
           }
         );
@@ -617,7 +722,7 @@ serve(async (req) => {
         standingsText += "\n00. Main Menu";
 
         return respondUSSD(standingsText.trim(), true, {
-          ...sessionState,
+          ...(sessionState || {}),
           current_step: "STANDINGS",
         });
       }
@@ -645,7 +750,7 @@ serve(async (req) => {
           `Candidate Code "${candidateCode}" not found.\n\nPlease check the code and try again (e.g. 101, 102):\n\n00. Main Menu`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "ENTER_CODE",
           }
         );
@@ -659,7 +764,7 @@ serve(async (req) => {
         `00. Back`,
         true,
         {
-          ...sessionState,
+          ...(sessionState || {}),
           current_step: "ENTER_VOTES",
           candidate_code: nominee.nominee_code,
           nominee_id: nominee.id,
@@ -677,7 +782,7 @@ serve(async (req) => {
           "Enter 3-digit Candidate Code:\n(e.g. 101, 102, 103)\n\n00. Main Menu",
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "ENTER_CODE",
           }
         );
@@ -689,16 +794,15 @@ serve(async (req) => {
           "Please enter a valid number of votes (e.g. 1, 5, 10):\n\n00. Back",
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "ENTER_VOTES",
           }
         );
       }
 
       const totalAmount = voteCount * votePrice;
-      const nomineeName = sessionState.nominee_name || "Nominee";
+      const nomineeName = sessionState?.nominee_name || "Nominee";
 
-      // Move to Network selection step
       return respondUSSD(
         `Nominee: ${nomineeName}\n` +
         `Votes: ${voteCount} (${formatGHS(totalAmount)})\n\n` +
@@ -709,7 +813,7 @@ serve(async (req) => {
         `00. Back`,
         true,
         {
-          ...sessionState,
+          ...(sessionState || {}),
           current_step: "SELECT_NETWORK",
           quantity: voteCount,
         }
@@ -722,14 +826,14 @@ serve(async (req) => {
     if (currentStep === "SELECT_NETWORK") {
       if (userInput === "00") {
         return respondUSSD(
-          `Nominee: ${sessionState.nominee_name}\n` +
+          `Nominee: ${sessionState?.nominee_name || "Nominee"}\n` +
           `Price: ${formatGHS(votePrice)} / vote\n\n` +
           `Enter number of votes to cast:\n` +
           `(e.g. 1, 5, 10, 20)\n\n` +
           `00. Back`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "ENTER_VOTES",
           }
         );
@@ -749,7 +853,7 @@ serve(async (req) => {
           `00. Back`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "SELECT_NETWORK",
           }
         );
@@ -765,7 +869,7 @@ serve(async (req) => {
         `00. Back`,
         true,
         {
-          ...sessionState,
+          ...(sessionState || {}),
           current_step: "CONFIRM_PHONE",
           network: networkName,
         }
@@ -785,20 +889,19 @@ serve(async (req) => {
           `00. Back`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "SELECT_NETWORK",
           }
         );
       }
 
       if (userInput === "1") {
-        // Use active phone number
         const walletPhone = phoneInfo.local || userId;
-        const voteCount = sessionState.quantity || 1;
+        const voteCount = sessionState?.quantity || 1;
         const totalAmount = voteCount * votePrice;
-        const nomineeName = sessionState.nominee_name || "Nominee";
-        const code = sessionState.candidate_code || "";
-        const netName = sessionState.network || "MTN";
+        const nomineeName = sessionState?.nominee_name || "Nominee";
+        const code = sessionState?.candidate_code || "";
+        const netName = sessionState?.network || "MTN";
 
         return respondUSSD(
           `Vote Summary:\n` +
@@ -812,7 +915,7 @@ serve(async (req) => {
           `00. Back`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "CONFIRM_VOTE",
             wallet_phone: walletPhone,
           }
@@ -820,14 +923,13 @@ serve(async (req) => {
       }
 
       if (userInput === "2") {
-        // User wants to type a different wallet number
         return respondUSSD(
           `Enter 10-digit MoMo Number:\n` +
           `(e.g. 0241234567)\n\n` +
           `00. Back`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "ENTER_PHONE",
           }
         );
@@ -840,7 +942,7 @@ serve(async (req) => {
         `00. Back`,
         true,
         {
-          ...sessionState,
+          ...(sessionState || {}),
           current_step: "CONFIRM_PHONE",
         }
       );
@@ -858,7 +960,7 @@ serve(async (req) => {
           `00. Back`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "CONFIRM_PHONE",
           }
         );
@@ -870,18 +972,18 @@ serve(async (req) => {
           `Invalid phone number. Please enter a 10-digit MoMo number (e.g. 0241234567):\n\n00. Back`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "ENTER_PHONE",
           }
         );
       }
 
       const walletPhone = inputPhone.startsWith("233") ? `0${inputPhone.slice(3)}` : inputPhone;
-      const voteCount = sessionState.quantity || 1;
+      const voteCount = sessionState?.quantity || 1;
       const totalAmount = voteCount * votePrice;
-      const nomineeName = sessionState.nominee_name || "Nominee";
-      const code = sessionState.candidate_code || "";
-      const netName = sessionState.network || "MTN";
+      const nomineeName = sessionState?.nominee_name || "Nominee";
+      const code = sessionState?.candidate_code || "";
+      const netName = sessionState?.network || "MTN";
 
       return respondUSSD(
         `Vote Summary:\n` +
@@ -895,7 +997,7 @@ serve(async (req) => {
         `00. Back`,
         true,
         {
-          ...sessionState,
+          ...(sessionState || {}),
           current_step: "CONFIRM_VOTE",
           wallet_phone: walletPhone,
         }
@@ -915,20 +1017,20 @@ serve(async (req) => {
           `00. Back`,
           true,
           {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "SELECT_NETWORK",
           }
         );
       }
 
       if (userInput === "1") {
-        const voteCount = sessionState.quantity || 1;
+        const voteCount = sessionState?.quantity || 1;
         const totalAmount = voteCount * votePrice;
-        const nomineeId = sessionState.nominee_id;
-        const candidateCode = sessionState.candidate_code || "";
-        const nomineeName = sessionState.nominee_name || "Nominee";
-        const network = sessionState.network || "MTN";
-        const walletPhone = sessionState.wallet_phone || phoneInfo.local || userId;
+        const nomineeId = sessionState?.nominee_id;
+        const candidateCode = sessionState?.candidate_code || "";
+        const nomineeName = sessionState?.nominee_name || "Nominee";
+        const network = sessionState?.network || "MTN";
+        const walletPhone = sessionState?.wallet_phone || phoneInfo.local || userId;
         const trxRef = `USSD_${Date.now().toString().slice(-8)}`;
 
         // 1. Trigger MoMo Payment API push to subscriber
@@ -978,7 +1080,6 @@ serve(async (req) => {
           },
         });
 
-        // 3. Return final prompt and end session so phone displays network PIN popup
         return respondUSSD(
           `Payment Request Sent!\n\n` +
           `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\n\n` +
@@ -1008,7 +1109,7 @@ serve(async (req) => {
       const categories = allCategories || [];
       const catPageSize = 4;
       const totalCatPages = Math.max(1, Math.ceil(categories.length / catPageSize));
-      let currentCatPage = sessionState.category_page || 1;
+      let currentCatPage = sessionState?.category_page || 1;
 
       if (userInput === "99") {
         currentCatPage = Math.min(totalCatPages, currentCatPage + 1);
@@ -1036,7 +1137,7 @@ serve(async (req) => {
               `No nominees currently registered in "${selectedCat.title}".\n\n00. Back to Categories`,
               true,
               {
-                ...sessionState,
+                ...(sessionState || {}),
                 current_step: "BROWSE_CATEGORIES",
               }
             );
@@ -1052,7 +1153,7 @@ serve(async (req) => {
           nomMenu += "00. Back to Categories";
 
           return respondUSSD(nomMenu.trim(), true, {
-            ...sessionState,
+            ...(sessionState || {}),
             current_step: "BROWSE_NOMINEES",
             category_id: selectedCat.id,
             category_title: selectedCat.title,
@@ -1074,7 +1175,7 @@ serve(async (req) => {
       catMenu += "00. Main Menu";
 
       return respondUSSD(catMenu.trim(), true, {
-        ...sessionState,
+        ...(sessionState || {}),
         current_step: "BROWSE_CATEGORIES",
         category_page: currentCatPage,
       });
@@ -1094,7 +1195,7 @@ serve(async (req) => {
         const categories = allCategories || [];
         const catPageSize = 4;
         const totalCatPages = Math.max(1, Math.ceil(categories.length / catPageSize));
-        const currentCatPage = sessionState.category_page || 1;
+        const currentCatPage = sessionState?.category_page || 1;
         const startIdx = (currentCatPage - 1) * catPageSize;
         const pageCats = categories.slice(startIdx, startIdx + catPageSize);
 
@@ -1108,12 +1209,12 @@ serve(async (req) => {
         catMenu += "00. Main Menu";
 
         return respondUSSD(catMenu.trim(), true, {
-          ...sessionState,
+          ...(sessionState || {}),
           current_step: "BROWSE_CATEGORIES",
         });
       }
 
-      const categoryId = sessionState.category_id;
+      const categoryId = sessionState?.category_id;
       const { data: allNominees = [] } = await supabase
         .from("nominees")
         .select("id, name, nominee_code")
@@ -1124,7 +1225,7 @@ serve(async (req) => {
       const catNominees = allNominees || [];
       const nomPageSize = 4;
       const totalNomPages = Math.max(1, Math.ceil(catNominees.length / nomPageSize));
-      let currentNomPage = sessionState.nominee_page || 1;
+      let currentNomPage = sessionState?.nominee_page || 1;
 
       if (userInput === "99") {
         currentNomPage = Math.min(totalNomPages, currentNomPage + 1);
@@ -1145,7 +1246,7 @@ serve(async (req) => {
             `00. Back`,
             true,
             {
-              ...sessionState,
+              ...(sessionState || {}),
               current_step: "ENTER_VOTES",
               candidate_code: selectedNominee.nominee_code,
               nominee_id: selectedNominee.id,
@@ -1157,7 +1258,7 @@ serve(async (req) => {
 
       const startIdx = (currentNomPage - 1) * nomPageSize;
       const pageNominees = catNominees.slice(startIdx, startIdx + nomPageSize);
-      const catTitle = sessionState.category_title || "Category";
+      const catTitle = sessionState?.category_title || "Category";
 
       let nomMenu = `${catTitle} (${currentNomPage}/${totalNomPages}):\n`;
       pageNominees.forEach((n, idx) => {
@@ -1169,7 +1270,7 @@ serve(async (req) => {
       nomMenu += "00. Back to Categories";
 
       return respondUSSD(nomMenu.trim(), true, {
-        ...sessionState,
+        ...(sessionState || {}),
         current_step: "BROWSE_NOMINEES",
         nominee_page: currentNomPage,
       });
