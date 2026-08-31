@@ -103,15 +103,24 @@ async function triggerMoMoPayment(params: {
   // 1. Prioritize Paystack MoMo Charge API if Paystack secret key is configured
   if (paystackKey) {
     try {
-      const provider = network.toLowerCase().includes("mtn")
-        ? "mtn"
-        : network.toLowerCase().includes("telecel") || network.toLowerCase().includes("vod")
-        ? "vod"
-        : "tgo";
+      // Auto-detect telco provider from 10-digit phone prefix
+      const prefix = normalized.local.slice(0, 3);
+      let provider = "mtn";
+      if (["024", "054", "055", "059", "053"].includes(prefix)) {
+        provider = "mtn";
+      } else if (["020", "050"].includes(prefix)) {
+        provider = "vod";
+      } else if (["027", "057", "026"].includes(prefix)) {
+        provider = "tgo";
+      } else if (network.toLowerCase().includes("telecel") || network.toLowerCase().includes("vod")) {
+        provider = "vod";
+      } else if (network.toLowerCase().includes("at") || network.toLowerCase().includes("tgo")) {
+        provider = "tgo";
+      }
 
       const chargePayload = {
         amount: Math.round(amount * 100), // In Ghana Pesewas (e.g. GHS 5.00 = 500)
-        email: "ussd-voting@abcossa.org",
+        email: `voter_${normalized.local}@abcossa.org`,
         currency: "GHS",
         reference: reference,
         mobile_money: {
