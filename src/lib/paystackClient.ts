@@ -313,3 +313,206 @@ export async function updatePaymentStatus(
     console.warn("Exception updating payment cancellation:", err);
   }
 }
+
+/**
+ * Directly synchronizes and reconciles all transactions from Paystack account into Supabase
+ */
+export async function syncPaystackTransactionsDirectly(includeTest = false): Promise<{
+  success: boolean;
+  message: string;
+  paystackTotal: number;
+  matchedCount: number;
+  importedCount: number;
+  updatedPaidCount: number;
+  votesCreditedTotal: number;
+  testSkippedCount: number;
+}> {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  // 1. Fetch Paystack secret key from site_settings
+  const { data: settingsData, error: sErr } = await supabase
+    .from("site_settings")
+    .select("key, value")
+    .in("key", ["paystack_secret_key", "paystack_public_key"]);
+
+  if (sErr) throw sErr;
+
+  const settingsMap = Object.fromEntries(
+    (settingsData || []).map((r: { key: string; value: string }) => [r.key, r.value])
+  );
+
+  const secretKey = settingsMap["paystack_secret_key"]?.trim() || "";
+  const publicKey = settingsMap["paystack_public_key"]?.trim() || "";
+
+  if (!secretKey) {
+    throw new Error("Paystack Secret Key is not configured yet. Please enter your secret key in Settings.");
+  }
+
+  const isTestKey = secretKey.startsWith("sk_test_") || publicKey.startsWith("pk_test_");
+
+  // 2. Query Paystack Transaction List API
+  const res = await fetch("https://api.paystack.co/transaction?perPage=100", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  const pData = await res.json();
+  if (!pData.status || !Array.isArray(pData.data)) {
+    throw new Error(pData.message || "Failed to retrieve transactions from Paystack");
+  }
+
+  const paystackTransactions = pData.data;
+
+  // 3. Fetch all local payments
+  const { data: localPayments = [], error: fetchLocalErr } = await supabase
+    .from("payments")
+    .select("*");
+
+  if (fetchLocalErr) throw fetchLocalErr;
+
+  const localMap = new Map<string, PaymentRecord>();
+  (localPayments || []).forEach((p: PaymentRecord) => {
+    if (p.client_reference) localMap.set(p.client_reference, p);
+    if (p.transaction_id) localMap.set(p.transaction_id, p);
+  });
+
+  let matchedCount = 0;
+  let importedCount = 0;
+  let updatedPaidCount = 0;
+  let votesCreditedTotal = 0;
+  let testSkippedCount = 0;
+
+  // 4. Process each transaction from Paystack
+  for (const p of paystackTransactions) {
+    const domain = String(p.domain || "").toLowerCase();
+    const gatewayResponse = String(p.gateway_response || "").toLowerCase();
+    const ref = String(p.reference || "").trim();
+
+    // If live key is used and user doesn't want test transactions, skip test domain
+    const isTest = domain === "test" || gatewayResponse.includes("test transaction") || ref.toLowerCase().startsWith("test_");
+    if (isTest && !isTestKey && !includeTest) {
+      testSkippedCount++;
+      continue;
+    }
+
+    const trxId = String(p.id || "");
+    const isSuccess = p.status === "success";
+    const normalizedStatus = isSuccess ? "paid" : p.status === "abandoned" ? "failed" : p.status;
+    const amountGhs = Number(p.amount || 0) / 100;
+    const channel = String(p.channel || "mobile_money");
+    const customerName =
+      `${p.customer?.first_name || ""} ${p.customer?.last_name || ""}`.trim() ||
+      p.customer?.email ||
+      "Paystack Customer";
+    const customerPhone = p.customer?.phone || "";
+    const customerEmail = p.customer?.email || "customer@abcossa.org";
+    const meta = typeof p.metadata === "object" && p.metadata !== null ? p.metadata : {};
+    const nomineeId = meta.nominee_id;
+    const votesCount = Number(meta.votes_count || 0);
+
+    const existing = localMap.get(ref) || localMap.get(trxId);
+
+    if (existing) {
+      matchedCount++;
+      const wasPaid = existing.status === "paid";
+
+      if (existing.status !== normalizedStatus || !existing.transaction_id) {
+        await supabase
+          .from("payments")
+          .update({
+            status: normalizedStatus,
+            transaction_id: trxId,
+            amount: amountGhs,
+            payment_channel: channel,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id);
+
+        if (!wasPaid && isSuccess) {
+          updatedPaidCount++;
+          if (nomineeId && votesCount > 0) {
+            const { data: nominee } = await supabase
+              .from("nominees")
+              .select("id, votes_count")
+              .eq("id", nomineeId)
+              .maybeSingle();
+
+            if (nominee) {
+              const newVotes = (nominee.votes_count || 0) + votesCount;
+              await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+              votesCreditedTotal += votesCount;
+            }
+          }
+        }
+      }
+    } else if (isSuccess) {
+      // Import new successful transaction from Paystack that was missing locally
+      importedCount++;
+      const newRecord = {
+        client_reference: ref || `PAYSTACK_${trxId}`,
+        transaction_id: trxId,
+        amount: amountGhs,
+        currency: p.currency || "GHS",
+        customer_name: customerName,
+        customer_email: customerEmail,
+        customer_phone: customerPhone,
+        payment_type: meta.payment_type || "voting",
+        status: "paid",
+        payment_channel: channel,
+        description: meta.description || `Paystack Payment for ${meta.nominee_name || "ABCOSSA"}`,
+        metadata: meta,
+        created_at: p.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await supabase.from("payments").insert(newRecord);
+
+      if (nomineeId && votesCount > 0) {
+        const { data: nominee } = await supabase
+          .from("nominees")
+          .select("id, votes_count")
+          .eq("id", nomineeId)
+          .maybeSingle();
+
+        if (nominee) {
+          const newVotes = (nominee.votes_count || 0) + votesCount;
+          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+          votesCreditedTotal += votesCount;
+        }
+      }
+    }
+  }
+
+  // 5. Cross-reference remaining local pending records
+  for (const localP of localPayments) {
+    if (localP.status === "pending" && localP.client_reference) {
+      const matchOnPaystack = paystackTransactions.find(
+        (t: any) => String(t.reference) === localP.client_reference
+      );
+      if (matchOnPaystack) {
+        const s = matchOnPaystack.status;
+        const newStatus = s === "success" ? "paid" : s === "abandoned" ? "failed" : s;
+        if (newStatus !== "pending") {
+          await supabase.from("payments").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", localP.id);
+          if (newStatus === "paid") updatedPaidCount++;
+        }
+      }
+    }
+  }
+
+  return {
+    success: true,
+    paystackTotal: paystackTransactions.length,
+    matchedCount,
+    importedCount,
+    updatedPaidCount,
+    votesCreditedTotal,
+    testSkippedCount,
+    message: `Synchronized ${paystackTransactions.length} transactions from Paystack. (${updatedPaidCount} updated to Paid, ${importedCount} imported, ${votesCreditedTotal} votes credited).`,
+  };
+}

@@ -4,6 +4,7 @@ import {
   createPaymentTransaction,
   updatePaymentSuccess,
   updatePaymentStatus,
+  syncPaystackTransactionsDirectly,
   type InitiatePaymentParams,
   type PaymentRecord,
 } from "@/lib/paystackClient";
@@ -424,7 +425,7 @@ export function useSyncAllPaystack() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (): Promise<{
+    mutationFn: async (includeTest = false): Promise<{
       success: boolean;
       message: string;
       paystackTotal?: number;
@@ -433,15 +434,22 @@ export function useSyncAllPaystack() {
       updatedPaidCount?: number;
       pendingFailedCount?: number;
       votesCreditedTotal?: number;
+      testSkippedCount?: number;
     }> => {
-      if (!supabase) throw new Error("Supabase client is not available");
+      try {
+        // 1. Direct browser-level sync with Paystack API & Supabase
+        return await syncPaystackTransactionsDirectly(includeTest);
+      } catch (clientErr) {
+        console.warn("Direct sync error, falling back to edge function:", clientErr);
+        if (!supabase) throw clientErr;
 
-      const { data, error } = await supabase.functions.invoke("paystack-sync", {
-        body: {},
-      });
+        const { data, error } = await supabase.functions.invoke("paystack-sync", {
+          body: { includeTest },
+        });
 
-      if (error) throw error;
-      return data;
+        if (error) throw error;
+        return data;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
