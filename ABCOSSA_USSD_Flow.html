@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 <title>ABCOSSA Dinner Awards - USSD Flow Document</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
-
   * {
     margin: 0;
     padding: 0;
@@ -15,14 +13,14 @@
   }
 
   body {
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background-color: #f1f5f9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #f8fafc;
     color: #0f172a;
   }
 
   .slide {
-    width: 1920px;
-    height: 1080px;
+    width: 1280px;
+    height: 720px;
     page-break-after: always;
     page-break-inside: avoid;
     position: relative;
@@ -31,12 +29,11 @@
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    padding: 60px 80px;
+    padding: 36px 50px 28px 50px;
   }
 
-  /* Slide Background Themes */
   .slide.dark-theme {
-    background: #5b6574;
+    background: #475569;
     color: #ffffff;
   }
 
@@ -51,42 +48,41 @@
   .slide-title-wrap {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
   }
 
   .slide-category {
-    font-size: 16px;
+    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 2px;
+    letter-spacing: 1.5px;
     color: #0d9488;
   }
 
   .slide-title {
-    font-size: 46px;
+    font-size: 26px;
     font-weight: 800;
     color: #1e293b;
-    letter-spacing: -1px;
+    letter-spacing: -0.5px;
   }
 
   .slide-subtitle {
-    font-size: 18px;
+    font-size: 13px;
     font-weight: 500;
     color: #64748b;
   }
 
   .page-badge {
-    width: 54px;
-    height: 54px;
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
     background: #14b8a6;
     color: #ffffff;
-    font-size: 24px;
+    font-size: 16px;
     font-weight: 800;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 4px 14px rgba(20, 184, 166, 0.4);
   }
 
   /* Phone Mockup Row */
@@ -94,10 +90,10 @@
     display: flex;
     justify-content: center;
     align-items: flex-end;
-    gap: 36px;
+    gap: 20px;
     flex: 1;
-    margin-top: 30px;
-    margin-bottom: 20px;
+    margin-top: 14px;
+    margin-bottom: 12px;
   }
 
   .phone-card {
@@ -108,29 +104,28 @@
   }
 
   .step-badge {
-    width: 38px;
-    height: 38px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
     background: #ef4444;
     color: #ffffff;
-    font-size: 18px;
+    font-size: 12px;
     font-weight: 800;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: -19px;
+    margin-bottom: -13px;
     z-index: 20;
-    box-shadow: 0 4px 10px rgba(239, 68, 68, 0.4);
-    border: 3px solid #ffffff;
+    border: 2px solid #ffffff;
   }
 
   .phone-device {
-    width: 290px;
-    height: 560px;
-    background: #181c24;
-    border-radius: 36px;
-    padding: 12px 10px;
-    box-shadow: 0 20px 45px -10px rgba(15, 23, 42, 0.35), 0 0 0 2px #334155;
+    width: 215px;
+    height: 410px;
+    background: #1e293b;
+    border-radius: 26px;
+    padding: 8px 7px;
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.25);
     position: relative;
     display: flex;
     flex-direction: column;
@@ -139,111 +134,111 @@
 
   .phone-notch {
     position: absolute;
-    top: 8px;
+    top: 6px;
     left: 50%;
     transform: translateX(-50%);
-    width: 70px;
-    height: 5px;
+    width: 50px;
+    height: 4px;
     background: #334155;
-    border-radius: 4px;
+    border-radius: 3px;
   }
 
   .phone-screen {
     width: 100%;
     height: 100%;
-    background: #5f6b7c;
-    border-radius: 26px;
+    background: #64748b;
+    border-radius: 20px;
     overflow: hidden;
     position: relative;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    padding: 14px;
+    padding: 10px;
   }
 
   .ussd-dialog {
     width: 100%;
     background: #ffffff;
-    border-radius: 20px;
-    padding: 20px 16px;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+    border-radius: 14px;
+    padding: 12px 10px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
   }
 
   .ussd-header {
-    font-size: 13px;
+    font-size: 10.5px;
     font-weight: 700;
     color: #0f172a;
-    line-height: 1.35;
+    line-height: 1.3;
     text-align: center;
     border-bottom: 1px solid #e2e8f0;
-    padding-bottom: 8px;
+    padding-bottom: 5px;
   }
 
   .ussd-theme-text {
-    font-size: 11px;
+    font-size: 9px;
     font-weight: 500;
     color: #64748b;
     text-align: center;
-    margin-top: -4px;
-    margin-bottom: 2px;
+    margin-top: -3px;
   }
 
   .ussd-body {
-    font-size: 12px;
+    font-size: 9.5px;
     color: #334155;
-    line-height: 1.45;
+    line-height: 1.4;
   }
 
   .ussd-menu-item {
-    font-size: 12px;
+    font-size: 9.5px;
     font-weight: 600;
     color: #1e293b;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
   }
 
   .ussd-bullet {
-    font-size: 11.5px;
+    font-size: 9px;
     color: #334155;
     display: flex;
     align-items: flex-start;
-    gap: 6px;
-    margin-bottom: 3px;
+    gap: 4px;
+    margin-bottom: 2px;
   }
 
   .ussd-input-box {
-    margin-top: 6px;
-    padding: 6px 10px;
+    margin-top: 4px;
+    padding: 4px 6px;
     background: #f8fafc;
     border: 1px dashed #cbd5e1;
-    border-radius: 8px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 9.5px;
     font-weight: 700;
     color: #0284c7;
     text-align: center;
   }
 
   .ussd-back {
-    font-size: 11px;
+    font-size: 8.5px;
     font-weight: 600;
     color: #64748b;
     text-align: center;
-    margin-top: 6px;
-    padding-top: 6px;
+    margin-top: 4px;
+    padding-top: 4px;
     border-top: 1px solid #f1f5f9;
   }
 
   .phone-caption {
-    margin-top: 12px;
-    font-size: 13px;
+    margin-top: 8px;
+    font-size: 11px;
     font-weight: 700;
     color: #475569;
     text-align: center;
-    max-width: 250px;
+    max-width: 190px;
+    line-height: 1.25;
   }
 
   .slide-footer {
@@ -251,92 +246,10 @@
     justify-content: space-between;
     align-items: center;
     border-top: 1px solid #e2e8f0;
-    padding-top: 16px;
-    font-size: 13px;
+    padding-top: 10px;
+    font-size: 10.5px;
     color: #94a3b8;
     font-weight: 600;
-  }
-
-  /* Cover Slide */
-  .cover-container {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    height: 100%;
-    text-align: center;
-    gap: 28px;
-  }
-
-  .cover-logo-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 24px;
-    background: rgba(20, 184, 166, 0.15);
-    border: 1.5px solid rgba(20, 184, 166, 0.4);
-    border-radius: 100px;
-    color: #0d9488;
-    font-weight: 700;
-    font-size: 16px;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-  }
-
-  .cover-title {
-    font-size: 64px;
-    font-weight: 800;
-    color: #0f172a;
-    letter-spacing: -2px;
-    line-height: 1.15;
-    max-width: 1200px;
-  }
-
-  .cover-subtitle {
-    font-size: 24px;
-    color: #64748b;
-    font-weight: 500;
-    max-width: 900px;
-    line-height: 1.5;
-  }
-
-  .cover-specs-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 24px;
-    margin-top: 20px;
-    width: 100%;
-    max-width: 1200px;
-  }
-
-  .spec-box {
-    background: #f8fafc;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 20px;
-    padding: 24px 20px;
-    text-align: left;
-  }
-
-  .spec-label {
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: #64748b;
-  }
-
-  .spec-value {
-    font-size: 22px;
-    font-weight: 800;
-    color: #0f172a;
-    margin-top: 6px;
-  }
-
-  .spec-sub {
-    font-size: 12px;
-    color: #0d9488;
-    font-weight: 600;
-    margin-top: 4px;
   }
 
   /* Thank You Slide */
@@ -347,101 +260,68 @@
     justify-content: center;
     height: 100%;
     text-align: center;
-    gap: 24px;
+    gap: 16px;
   }
 
   .thumb-icon-box {
-    width: 140px;
-    height: 140px;
-    border-radius: 36px;
+    width: 90px;
+    height: 90px;
+    border-radius: 24px;
     background: rgba(255, 255, 255, 0.15);
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 20px 40px rgba(0,0,0,0.2);
   }
 
   .thank-you-title {
-    font-size: 64px;
+    font-size: 48px;
     font-weight: 800;
-    letter-spacing: 4px;
+    letter-spacing: 3px;
     color: #ffffff;
-    border-bottom: 2px solid rgba(255, 255, 255, 0.4);
-    padding-bottom: 12px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.3);
+    padding-bottom: 8px;
   }
 
   .thank-you-sub {
-    font-size: 20px;
+    font-size: 14px;
     color: #e2e8f0;
     font-weight: 500;
-    max-width: 700px;
+    max-width: 600px;
+    line-height: 1.5;
+  }
+
+  .thank-you-specs {
+    display: flex;
+    gap: 16px;
+    margin-top: 10px;
+  }
+
+  .thank-you-badge {
+    padding: 6px 14px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #f1f5f9;
   }
 </style>
 </head>
 <body>
 
-  <!-- SLIDE 1: Cover & Architecture Overview -->
+  <!-- SLIDE 1: Welcome & Shortcode Overview -->
   <div class="slide">
     <div class="slide-header">
       <div class="slide-title-wrap">
-        <span class="slide-category">Technical Specification & Telecom Flow</span>
-        <h2 class="slide-title">ABCOSSA Dinner Awards '26</h2>
+        <span class="slide-category">Page 1: Welcome & Info</span>
+        <h2 class="slide-title">ABCOSSA Dinner Awards '26 - USSD System</h2>
+        <p class="slide-subtitle">Master Shortcode: *928*667# • Express Fast-Dial: *928*667*Code#</p>
       </div>
       <div class="page-badge">1</div>
     </div>
 
-    <div class="cover-container">
-      <div class="cover-logo-badge">
-        <span>Arkesel / Hubtel / Paystack Gateway Specification</span>
-      </div>
-      <h1 class="cover-title">USSD Interactive Voting System Flow</h1>
-      <p class="cover-subtitle">
-        Offline interactive voting flow across MTN MoMo, Telecel Cash, and AT Money via mobile shortcode dialing.
-      </p>
-
-      <div class="cover-specs-grid">
-        <div class="spec-box">
-          <div class="spec-label">Master Shortcode</div>
-          <div class="spec-value">*928*667#</div>
-          <div class="spec-sub">Direct: *928*667*Code#</div>
-        </div>
-        <div class="spec-box">
-          <div class="spec-label">Default Gateway</div>
-          <div class="spec-value">Arkesel USSD</div>
-          <div class="spec-sub">Hubtel & Paystack Ready</div>
-        </div>
-        <div class="spec-box">
-          <div class="spec-label">Vote Pricing</div>
-          <div class="spec-value">GHS 1.00 / Vote</div>
-          <div class="spec-sub">Multi-vote batching enabled</div>
-        </div>
-        <div class="spec-box">
-          <div class="spec-label">Interoperability</div>
-          <div class="spec-value">All Ghana Telcos</div>
-          <div class="spec-sub">MTN • Telecel • AT</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="slide-footer">
-      <span>Association of Biochemistry & Cell Biology Students (ABCOSSA)</span>
-      <span>Document Ref: ABCOSSA-USSD-2026-V1</span>
-    </div>
-  </div>
-
-  <!-- SLIDE 2: Direct Candidate Voting Flow -->
-  <div class="slide">
-    <div class="slide-header">
-      <div class="slide-title-wrap">
-        <span class="slide-category">Flow 1: Express Voting</span>
-        <h2 class="slide-title">Direct Voting via Candidate Code</h2>
-        <p class="slide-subtitle">Voter dials *928*667# or fast dials *928*667*101# directly</p>
-      </div>
-      <div class="page-badge">2</div>
-    </div>
-
-    <div class="phones-container">
-      <!-- Phone 1 -->
+    <div class="phones-container" style="gap: 36px;">
+      <!-- Phone 1: Main Welcome -->
       <div class="phone-card">
         <div class="step-badge">1</div>
         <div class="phone-device">
@@ -449,63 +329,125 @@
           <div class="phone-screen">
             <div class="ussd-dialog">
               <div class="ussd-header">Welcome to ABCOSSA<br>Dinner Awards '26</div>
-              <div class="ussd-theme-text">Celebrating Academic Excellence</div>
+              <div class="ussd-theme-text">Biochemistry & Cell Biology</div>
               <div class="ussd-body">
                 <div class="ussd-menu-item">1. Vote with Nominee Code</div>
                 <div class="ussd-menu-item">2. Browse Award Categories</div>
-                <div class="ussd-menu-item">3. View Voting Price & Info</div>
+                <div class="ussd-menu-item">3. View Voting Info & Rates</div>
               </div>
               <div class="ussd-input-box">Input: 1</div>
             </div>
           </div>
         </div>
-        <div class="phone-caption">1. Main Menu & Selection</div>
+        <div class="phone-caption">1. Dial *928*667# Main Menu</div>
       </div>
 
-      <!-- Phone 2 -->
+      <!-- Phone 2: Info Screen -->
       <div class="phone-card">
-        <div class="step-badge">2</div>
+        <div class="step-badge">i</div>
+        <div class="phone-device">
+          <div class="phone-notch"></div>
+          <div class="phone-screen">
+            <div class="ussd-dialog">
+              <div class="ussd-header">Voting Info & Pricing</div>
+              <div class="ussd-body">
+                <div class="ussd-bullet">• <strong>Price:</strong> GHS 1.00 per vote</div>
+                <div class="ussd-bullet">• <strong>Networks:</strong> MTN, Telecel, AT</div>
+                <div class="ussd-bullet">• <strong>Fast Dial:</strong> *928*667*Code#</div>
+                <div class="ussd-bullet">• <strong>Web:</strong> abcossa.org</div>
+              </div>
+              <div class="ussd-back">00. Main Menu</div>
+            </div>
+          </div>
+        </div>
+        <div class="phone-caption">2. Menu Option 3: Voting Info</div>
+      </div>
+
+      <!-- Phone 3: Express Dial -->
+      <div class="phone-card">
+        <div class="step-badge">⚡</div>
+        <div class="phone-device">
+          <div class="phone-notch"></div>
+          <div class="phone-screen">
+            <div class="ussd-dialog">
+              <div class="ussd-header">Direct Nominee Lookup</div>
+              <div class="ussd-body">
+                <div class="ussd-bullet">• <strong>Dialed:</strong> *928*667*101#</div>
+                <div class="ussd-bullet">• <strong>Nominee:</strong> Ama Serwaa</div>
+                <div class="ussd-bullet">• <strong>Category:</strong> Student of Year</div>
+                <div style="margin-top: 4px; font-weight: 700; color: #0d9488;">Enter vote quantity:</div>
+              </div>
+              <div class="ussd-input-box">Input: 10</div>
+              <div class="ussd-back">00. Main Menu</div>
+            </div>
+          </div>
+        </div>
+        <div class="phone-caption">3. Express Fast-Dial (*928*667*101#)</div>
+      </div>
+    </div>
+
+    <div class="slide-footer">
+      <span>ABCOSSA USSD Gateway • Arkesel / Hubtel / Paystack</span>
+      <span>Telecom Flow Specification • Page 1</span>
+    </div>
+  </div>
+
+  <!-- SLIDE 2: Direct Candidate Voting Flow (Step 1 - 4) -->
+  <div class="slide">
+    <div class="slide-header">
+      <div class="slide-title-wrap">
+        <span class="slide-category">Page 2: Express Voting Flow</span>
+        <h2 class="slide-title">Direct Code Voting & Quantity Selection</h2>
+        <p class="slide-subtitle">Voter enters candidate 3-digit code, specifies votes quantity, and confirms payment</p>
+      </div>
+      <div class="page-badge">2</div>
+    </div>
+
+    <div class="phones-container">
+      <!-- Step 1 -->
+      <div class="phone-card">
+        <div class="step-badge">1</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen">
             <div class="ussd-dialog">
               <div class="ussd-header">Enter Candidate Code</div>
               <div class="ussd-body">
-                <div style="font-size: 11.5px; margin-bottom: 6px;">Enter 3-digit candidate number (e.g. 101, 102, 103...)</div>
+                <div style="font-size: 9px; margin-bottom: 4px;">Enter candidate number (e.g. 101, 102, 103...)</div>
               </div>
               <div class="ussd-input-box">Input: 101</div>
               <div class="ussd-back">00. Back to Main Menu</div>
             </div>
           </div>
         </div>
-        <div class="phone-caption">2. Enter Nominee Code</div>
+        <div class="phone-caption">1. Enter Nominee Code</div>
       </div>
 
-      <!-- Phone 3 -->
+      <!-- Step 2 -->
       <div class="phone-card">
-        <div class="step-badge">3</div>
+        <div class="step-badge">2</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen">
             <div class="ussd-dialog">
-              <div class="ussd-header">Candidate Profile</div>
+              <div class="ussd-header">Nominee Profile</div>
               <div class="ussd-body">
-                <div class="ussd-bullet">• <strong>Nominee:</strong> Ama Serwaa</div>
+                <div class="ussd-bullet">• <strong>Name:</strong> Ama Serwaa</div>
                 <div class="ussd-bullet">• <strong>Category:</strong> Student of Year</div>
                 <div class="ussd-bullet">• <strong>Rate:</strong> GHS 1.00 / vote</div>
-                <div style="margin-top: 6px; font-weight: 600;">Enter number of votes:</div>
+                <div style="margin-top: 4px; font-weight: 600;">Enter number of votes:</div>
               </div>
               <div class="ussd-input-box">Input: 5</div>
               <div class="ussd-back">00. Back</div>
             </div>
           </div>
         </div>
-        <div class="phone-caption">3. Specify Votes Quantity</div>
+        <div class="phone-caption">2. Enter Vote Quantity</div>
       </div>
 
-      <!-- Phone 4 -->
+      <!-- Step 3 -->
       <div class="phone-card">
-        <div class="step-badge">4</div>
+        <div class="step-badge">3</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen">
@@ -513,11 +455,10 @@
               <div class="ussd-header">Confirm Vote & Payment</div>
               <div class="ussd-body">
                 <div class="ussd-bullet">• <strong>Nominee:</strong> Ama Serwaa</div>
-                <div class="ussd-bullet">• <strong>Quantity:</strong> 5 Votes</div>
-                <div class="ussd-bullet">• <strong>Total Amount:</strong> GHS 5.00</div>
-                <div style="margin-top: 6px;">
+                <div class="ussd-bullet">• <strong>Votes:</strong> 5 (GHS 5.00)</div>
+                <div style="margin-top: 4px;">
                   <div class="ussd-menu-item">1. Confirm & Pay via MoMo</div>
-                  <div class="ussd-menu-item">2. Cancel Transaction</div>
+                  <div class="ussd-menu-item">2. Cancel</div>
                 </div>
               </div>
               <div class="ussd-input-box">Input: 1</div>
@@ -525,97 +466,77 @@
             </div>
           </div>
         </div>
-        <div class="phone-caption">4. Summary & Confirmation</div>
+        <div class="phone-caption">3. Review & Confirm</div>
       </div>
 
-      <!-- Phone 5 -->
+      <!-- Step 4 -->
       <div class="phone-card">
-        <div class="step-badge">5</div>
+        <div class="step-badge">4</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen">
             <div class="ussd-dialog">
               <div class="ussd-header">Payment Request Sent</div>
               <div class="ussd-body" style="text-align: center; padding: 4px 0;">
-                <div style="font-size: 12px; font-weight: 600; color: #0f172a; margin-bottom: 8px;">
-                  You requested 5 votes for Ama Serwaa (GHS 5.00).
+                <div style="font-weight: 700; color: #0f172a; margin-bottom: 4px;">
+                  Requested 5 votes for Ama Serwaa (GHS 5.00).
                 </div>
-                <div style="font-size: 11px; color: #64748b;">
-                  Please wait for your network Mobile Money PIN prompt to authorize payment.
+                <div style="font-size: 8.5px; color: #64748b;">
+                  Please wait for your network Mobile Money PIN prompt.
                 </div>
               </div>
               <div class="ussd-back">Session Ended</div>
             </div>
           </div>
         </div>
-        <div class="phone-caption">5. Authorization Notification</div>
+        <div class="phone-caption">4. Awaiting PIN Prompt</div>
       </div>
     </div>
 
     <div class="slide-footer">
-      <span>Flow 1: Direct Candidate Voting (*928*667*101# / Menu)</span>
-      <span>ABCOSSA USSD Voting Gateway</span>
+      <span>Flow 1: Direct Candidate Code Voting Sequence</span>
+      <span>Telecom Flow Specification • Page 2</span>
     </div>
   </div>
 
-  <!-- SLIDE 3: Browse Categories & Contenders -->
+  <!-- SLIDE 3: Discovery & Mobile Money Fulfillment -->
   <div class="slide">
     <div class="slide-header">
       <div class="slide-title-wrap">
-        <span class="slide-category">Flow 2: Discovery Mode</span>
-        <h2 class="slide-title">Browse Categories & Nominees</h2>
-        <p class="slide-subtitle">Voter explores categories and selects their favorite contender</p>
+        <span class="slide-category">Page 3: Categories & Payment Push</span>
+        <h2 class="slide-title">Browse Directory & Mobile Money Push</h2>
+        <p class="slide-subtitle">Multi-page award categories, nominee selection, MoMo PIN authorization, and confirmation</p>
       </div>
       <div class="page-badge">3</div>
     </div>
 
     <div class="phones-container">
-      <!-- Phone 1 -->
+      <!-- Screen 1: Browse Categories -->
       <div class="phone-card">
-        <div class="step-badge">1</div>
-        <div class="phone-device">
-          <div class="phone-notch"></div>
-          <div class="phone-screen">
-            <div class="ussd-dialog">
-              <div class="ussd-header">Welcome to ABCOSSA<br>Dinner Awards '26</div>
-              <div class="ussd-body">
-                <div class="ussd-menu-item">1. Vote with Nominee Code</div>
-                <div class="ussd-menu-item" style="color: #0d9488;">2. Browse Award Categories</div>
-                <div class="ussd-menu-item">3. View Voting Price & Info</div>
-              </div>
-              <div class="ussd-input-box">Input: 2</div>
-            </div>
-          </div>
-        </div>
-        <div class="phone-caption">1. Select Option 2</div>
-      </div>
-
-      <!-- Phone 2 -->
-      <div class="phone-card">
-        <div class="step-badge">2</div>
+        <div class="step-badge">A</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen">
             <div class="ussd-dialog">
               <div class="ussd-header">Select Award Category</div>
               <div class="ussd-body">
-                <div class="ussd-menu-item">1. Student of the Year</div>
+                <div class="ussd-menu-item">1. Student of Year</div>
                 <div class="ussd-menu-item">2. Best Researcher</div>
                 <div class="ussd-menu-item">3. Best Pals</div>
-                <div class="ussd-menu-item">4. Blogger of the Year</div>
-                <div class="ussd-menu-item">5. Next Page >></div>
+                <div class="ussd-menu-item">4. Blogger of Year</div>
+                <div class="ussd-menu-item" style="color: #0d9488;">99. Next Page >></div>
               </div>
               <div class="ussd-input-box">Input: 1</div>
               <div class="ussd-back">00. Main Menu</div>
             </div>
           </div>
         </div>
-        <div class="phone-caption">2. Select Category</div>
+        <div class="phone-caption">A. Browse Categories</div>
       </div>
 
-      <!-- Phone 3 -->
+      <!-- Screen 2: Nominees in Category -->
       <div class="phone-card">
-        <div class="step-badge">3</div>
+        <div class="step-badge">B</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen">
@@ -625,160 +546,75 @@
                 <div class="ussd-menu-item">1. Ama Serwaa (#101)</div>
                 <div class="ussd-menu-item">2. Kwesi Mensah (#102)</div>
                 <div class="ussd-menu-item">3. Abena Osei (#103)</div>
-                <div class="ussd-menu-item">4. Next Page >></div>
+                <div class="ussd-menu-item" style="color: #0d9488;">99. Next Page >></div>
               </div>
               <div class="ussd-input-box">Input: 1</div>
               <div class="ussd-back">00. Categories List</div>
             </div>
           </div>
         </div>
-        <div class="phone-caption">3. Select Nominee</div>
+        <div class="phone-caption">B. Select Contender</div>
       </div>
 
-      <!-- Phone 4 -->
+      <!-- Screen 3: MoMo Push -->
       <div class="phone-card">
-        <div class="step-badge">4</div>
-        <div class="phone-device">
-          <div class="phone-notch"></div>
-          <div class="phone-screen">
-            <div class="ussd-dialog">
-              <div class="ussd-header">Enter Number of Votes</div>
-              <div class="ussd-body">
-                <div class="ussd-bullet">• <strong>Nominee:</strong> Ama Serwaa</div>
-                <div class="ussd-bullet">• <strong>Code:</strong> 101</div>
-                <div class="ussd-bullet">• <strong>Price:</strong> GHS 1.00 / vote</div>
-                <div style="margin-top: 6px; font-weight: 600;">Enter vote quantity:</div>
-              </div>
-              <div class="ussd-input-box">Input: 10</div>
-              <div class="ussd-back">00. Back</div>
-            </div>
-          </div>
-        </div>
-        <div class="phone-caption">4. Enter Quantity</div>
-      </div>
-
-      <!-- Phone 5 -->
-      <div class="phone-card">
-        <div class="step-badge">5</div>
-        <div class="phone-device">
-          <div class="phone-notch"></div>
-          <div class="phone-screen">
-            <div class="ussd-dialog">
-              <div class="ussd-header">Confirm Vote & Payment</div>
-              <div class="ussd-body">
-                <div class="ussd-bullet">• <strong>Nominee:</strong> Ama Serwaa</div>
-                <div class="ussd-bullet">• <strong>Votes:</strong> 10</div>
-                <div class="ussd-bullet">• <strong>Total Price:</strong> GHS 10.00</div>
-                <div style="margin-top: 6px;">
-                  <div class="ussd-menu-item">1. Confirm Payment</div>
-                  <div class="ussd-menu-item">2. Cancel</div>
-                </div>
-              </div>
-              <div class="ussd-input-box">Input: 1</div>
-              <div class="ussd-back">00. Back</div>
-            </div>
-          </div>
-        </div>
-        <div class="phone-caption">5. Confirm Payment</div>
-      </div>
-    </div>
-
-    <div class="slide-footer">
-      <span>Flow 2: Category & Nominee Directory Navigation</span>
-      <span>ABCOSSA USSD Voting Gateway</span>
-    </div>
-  </div>
-
-  <!-- SLIDE 4: Payment Prompt, Callback & SMS Receipt -->
-  <div class="slide">
-    <div class="slide-header">
-      <div class="slide-title-wrap">
-        <span class="slide-category">Flow 3: Payment & Fulfillment</span>
-        <h2 class="slide-title">Mobile Money Push & Live Receipt</h2>
-        <p class="slide-subtitle">Voter enters PIN on network prompt and receives instant vote confirmation</p>
-      </div>
-      <div class="page-badge">4</div>
-    </div>
-
-    <div class="phones-container" style="justify-content: center; gap: 60px;">
-      <!-- Phone 1 (MoMo Prompt) -->
-      <div class="phone-card">
-        <div class="step-badge">6</div>
+        <div class="step-badge">C</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen" style="background: #334155;">
             <div class="ussd-dialog" style="border: 2px solid #38bdf8;">
               <div class="ussd-header" style="color: #0284c7;">Mobile Money Payment</div>
               <div class="ussd-body">
-                <div class="ussd-bullet">• <strong>Merchant:</strong> ABCOSSA AWARDS</div>
+                <div class="ussd-bullet">• <strong>To:</strong> ABCOSSA AWARDS</div>
                 <div class="ussd-bullet">• <strong>Amount:</strong> GHS 5.00</div>
-                <div class="ussd-bullet">• <strong>Reference:</strong> VOTE-101-5</div>
-                <div style="margin-top: 8px; font-weight: 700; color: #0f172a;">Enter Mobile Money PIN:</div>
+                <div class="ussd-bullet">• <strong>Ref:</strong> VOTE-101-5</div>
+                <div style="margin-top: 4px; font-weight: 700; color: #0f172a;">Enter MoMo PIN:</div>
               </div>
-              <div class="ussd-input-box" style="background: #e0f2fe; color: #0369a1; letter-spacing: 4px;">••••</div>
+              <div class="ussd-input-box" style="background: #e0f2fe; color: #0369a1; letter-spacing: 3px;">••••</div>
             </div>
           </div>
         </div>
-        <div class="phone-caption">6. Network MoMo Authorization</div>
+        <div class="phone-caption">C. Network PIN Prompt</div>
       </div>
 
-      <!-- Phone 2 (USSD Final Confirmation) -->
+      <!-- Screen 4: Transaction Success -->
       <div class="phone-card">
-        <div class="step-badge">7</div>
+        <div class="step-badge">✓</div>
         <div class="phone-device">
           <div class="phone-notch"></div>
           <div class="phone-screen">
             <div class="ussd-dialog" style="border: 2px solid #22c55e;">
-              <div class="ussd-header" style="color: #15803d;">Payment Received!</div>
-              <div class="ussd-body" style="text-align: center; padding: 6px 0;">
-                <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">
-                  Payment of GHS 5.00 received!
+              <div class="ussd-header" style="color: #15803d;">Payment Successful!</div>
+              <div class="ussd-body" style="text-align: center; padding: 4px 0;">
+                <div style="font-weight: 700; color: #0f172a; margin-bottom: 3px;">
+                  GHS 5.00 Received!
                 </div>
-                <div style="font-size: 12px; color: #16a34a; font-weight: 600; margin-bottom: 8px;">
-                  ✓ 5 Votes successfully added for Ama Serwaa (#101).
+                <div style="font-size: 8.5px; color: #16a34a; font-weight: 600; margin-bottom: 4px;">
+                  ✓ 5 Votes added for Ama Serwaa (#101).
                 </div>
-                <div style="font-size: 11px; color: #64748b;">
-                  Thank you for supporting ABCOSSA Dinner Awards 2026.
+                <div style="font-size: 8px; color: #64748b;">
+                  Thank you for voting!
                 </div>
               </div>
               <div class="ussd-back">Session Ended</div>
             </div>
           </div>
         </div>
-        <div class="phone-caption">7. Transaction Success Screen</div>
-      </div>
-
-      <!-- Phone 3 (SMS Receipt) -->
-      <div class="phone-card">
-        <div class="step-badge">8</div>
-        <div class="phone-device">
-          <div class="phone-notch"></div>
-          <div class="phone-screen" style="background: #1e293b;">
-            <div class="ussd-dialog" style="background: #0f172a; color: #f8fafc; border: 1px solid #334155;">
-              <div class="ussd-header" style="color: #38bdf8; border-bottom: 1px solid #1e293b;">SMS from ABCOSSA</div>
-              <div class="ussd-body" style="color: #cbd5e1; font-size: 11.5px; line-height: 1.5;">
-                <p><strong>Payment Confirmed:</strong></p>
-                <p style="margin-top: 4px;">GHS 5.00 for 5 votes to <strong>Ama Serwaa (#101)</strong> in Student of the Year is recorded!</p>
-                <p style="margin-top: 8px; font-size: 10.5px; color: #94a3b8;">Trx ID: ARK_78291038<br>Standings: https://abcossa.org/nominees</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="phone-caption">8. Instant SMS Receipt</div>
+        <div class="phone-caption">D. Instant Confirmation</div>
       </div>
     </div>
 
     <div class="slide-footer">
-      <span>Flow 3: Telecom Webhook Callback & Payment Authorization</span>
-      <span>ABCOSSA USSD Voting Gateway</span>
+      <span>Flow 2 & 3: Directory Browsing & Telco Payment Authorization</span>
+      <span>Telecom Flow Specification • Page 3</span>
     </div>
   </div>
 
-  <!-- SLIDE 5: Thank You & Contact -->
+  <!-- SLIDE 4: Thank You -->
   <div class="slide dark-theme">
     <div class="thank-you-container">
       <div class="thumb-icon-box">
-        <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M7 10v12"></path>
           <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z"></path>
         </svg>
@@ -786,8 +622,13 @@
       <h1 class="thank-you-title">THANK YOU</h1>
       <p class="thank-you-sub">
         ABCOSSA Dinner Awards 2026 Interactive USSD Voting System.<br>
-        Built for reliable telecom aggregation with Arkesel, Hubtel, and Paystack.
+        Built for reliable telecom aggregation across MTN, Telecel, and AT networks.
       </p>
+      <div class="thank-you-specs">
+        <div class="thank-you-badge">Shortcode: *928*667#</div>
+        <div class="thank-you-badge">Fast Dial: *928*667*Code#</div>
+        <div class="thank-you-badge">Gateway: Arkesel / Hubtel</div>
+      </div>
     </div>
     <div class="slide-footer" style="border-top: 1px solid rgba(255,255,255,0.2); color: #cbd5e1;">
       <span>Association of Biochemistry & Cell Biology Students (ABCOSSA)</span>
