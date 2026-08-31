@@ -70,10 +70,22 @@ serve(async (req) => {
     let importedCount = 0;
     let updatedPaidCount = 0;
     let votesCreditedTotal = 0;
+    let testSkippedCount = 0;
 
-    // 3. Reconcile each transaction from Paystack
+    // 3. Reconcile each transaction from Paystack (STRICTLY EXCLUDING TEST TRANSACTIONS)
     for (const p of paystackTransactions) {
+      const domain = String(p.domain || "").toLowerCase();
+      const gatewayResponse = String(p.gateway_response || "").toLowerCase();
       const ref = String(p.reference || "").trim();
+
+      // STRICT CHECK: Skip all test domain transactions
+      const isTest = domain === "test" || gatewayResponse.includes("test transaction") || ref.toLowerCase().startsWith("test_");
+      if (isTest) {
+        testSkippedCount++;
+        console.log(`Skipping test transaction ${ref} (domain: ${domain})`);
+        continue;
+      }
+
       const trxId = String(p.id || "");
       const isSuccess = p.status === "success";
       const normalizedStatus = isSuccess ? "paid" : p.status === "abandoned" ? "failed" : p.status;
@@ -124,7 +136,7 @@ serve(async (req) => {
           }
         }
       } else if (isSuccess) {
-        // Import new successful transaction from Paystack that was missing locally
+        // Import new LIVE successful transaction from Paystack that was missing locally
         importedCount++;
         const newRecord = {
           client_reference: ref || `PAYSTACK_${trxId}`,
@@ -162,16 +174,20 @@ serve(async (req) => {
       }
     }
 
-    // 4. Check remaining local 'pending' records against Paystack list
-    const paystackRefSet = new Set(paystackTransactions.map((t: any) => String(t.reference)));
+    // 4. Check remaining local 'pending' records against Paystack live list
+    const paystackRefSet = new Set(
+      paystackTransactions
+        .filter((t: any) => String(t.domain || "").toLowerCase() !== "test")
+        .map((t: any) => String(t.reference))
+    );
     let pendingFailedCount = 0;
 
     for (const localP of localPayments) {
       if (localP.status === "pending" && localP.client_reference) {
         if (paystackRefSet.has(localP.client_reference)) {
-          // It was processed in the loop above
+          // Already matched in live loop
         } else {
-          // If transaction is not in Paystack's recent list, verify directly via Paystack verify API
+          // Query single transaction verification
           try {
             const singleRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(localP.client_reference)}`, {
               method: "GET",
@@ -179,12 +195,15 @@ serve(async (req) => {
             });
             const singleData = await singleRes.json();
             if (singleData.status && singleData.data) {
-              const s = singleData.data.status;
-              const newStatus = s === "success" ? "paid" : s === "abandoned" ? "failed" : s;
-              if (newStatus !== "pending") {
-                await supabase.from("payments").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", localP.id);
-                if (newStatus === "paid") updatedPaidCount++;
-                if (newStatus === "failed") pendingFailedCount++;
+              const domain = String(singleData.data.domain || "").toLowerCase();
+              if (domain !== "test") {
+                const s = singleData.data.status;
+                const newStatus = s === "success" ? "paid" : s === "abandoned" ? "failed" : s;
+                if (newStatus !== "pending") {
+                  await supabase.from("payments").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", localP.id);
+                  if (newStatus === "paid") updatedPaidCount++;
+                  if (newStatus === "failed") pendingFailedCount++;
+                }
               }
             }
           } catch (_) {}
@@ -201,7 +220,8 @@ serve(async (req) => {
         updatedPaidCount,
         pendingFailedCount,
         votesCreditedTotal,
-        message: `Successfully synchronized with Paystack: ${paystackTransactions.length} transactions processed, ${updatedPaidCount} updated to Paid, ${importedCount} imported, ${votesCreditedTotal} votes credited.`,
+        testSkippedCount,
+        message: `Successfully synchronized live payments: ${updatedPaidCount} updated to Paid, ${importedCount} imported, ${votesCreditedTotal} votes credited (${testSkippedCount} test records excluded).`,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

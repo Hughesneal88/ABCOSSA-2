@@ -52,6 +52,21 @@ serve(async (req) => {
     const result = await paystackRes.json();
     console.log("Paystack verification result for", reference, ":", JSON.stringify(result));
 
+    // STRICT CHECK: Skip test domain transactions
+    const domain = String(result.data?.domain || "").toLowerCase();
+    const gatewayResponse = String(result.data?.gateway_response || "").toLowerCase();
+    if (domain === "test" || gatewayResponse.includes("test transaction")) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          status: "test_ignored",
+          verified: false,
+          message: "This is a Paystack test/sandbox transaction and was ignored to preserve live data.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Fetch current payment record from database
     const { data: currentPayment } = await supabase
       .from("payments")
