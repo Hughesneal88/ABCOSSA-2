@@ -97,9 +97,23 @@ export function loadPaystackScript(): Promise<boolean> {
  * Open Paystack popup supporting both V2 class and V1 setup patterns
  */
 export async function openPaystackPopup(options: OpenPaystackOptions): Promise<void> {
+  const cleanKey = String(options.key || "").trim();
+
+  if (!cleanKey) {
+    throw new Error(
+      "Paystack Public Key is missing. Please configure your Paystack Public Key (starting with pk_live_ or pk_test_) in the Staff Admin Portal."
+    );
+  }
+
+  if (cleanKey.startsWith("sk_")) {
+    throw new Error(
+      "Configuration Error: You provided a Paystack Secret Key (sk_...) instead of a Public Key. The website checkout popup strictly requires your Public Key (starting with pk_live_ or pk_test_). Please update it in Staff Portal -> Financials."
+    );
+  }
+
   const loaded = await loadPaystackScript();
   if (!loaded || !window.PaystackPop) {
-    throw new Error("Unable to load Paystack payment module. Please check your internet connection and try again.");
+    throw new Error("Unable to load Paystack payment module. Please check your internet connection and reload the page.");
   }
 
   // Ensure callback functions are standard synchronous functions
@@ -117,40 +131,13 @@ export async function openPaystackPopup(options: OpenPaystackOptions): Promise<v
     options.onCancel();
   };
 
-  // 1. Try Paystack V2 class pattern: new PaystackPop().newTransaction(...)
-  try {
-    if (typeof window.PaystackPop === "function") {
-      const paystackInstance = new window.PaystackPop();
-      if (paystackInstance && typeof paystackInstance.newTransaction === "function") {
-        paystackInstance.newTransaction({
-          key: options.key,
-          email: options.email,
-          amount: options.amount,
-          currency: options.currency || "GHS",
-          ref: options.ref,
-          reference: options.ref,
-          firstname: options.firstname,
-          lastname: options.lastname,
-          phone: options.phone,
-          channels: options.channels || ["mobile_money", "card"],
-          metadata: options.metadata,
-          onSuccess: handleSuccess,
-          onCancel: handleCancel,
-        });
-        return;
-      }
-    }
-  } catch (err) {
-    console.warn("Paystack V2 newTransaction failed, trying fallback:", err);
-  }
-
-  // 2. Try Paystack V1 setup pattern: PaystackPop.setup({...}).openIframe()
+  // 1. Try Paystack V1 setup pattern: PaystackPop.setup({...}).openIframe() (universally reliable)
   if (window.PaystackPop && typeof window.PaystackPop.setup === "function") {
     try {
       const handler = window.PaystackPop.setup({
-        key: options.key,
+        key: cleanKey,
         email: options.email,
-        amount: options.amount,
+        amount: Math.round(options.amount), // in pesewas
         currency: options.currency || "GHS",
         ref: options.ref,
         firstname: options.firstname,
@@ -167,11 +154,38 @@ export async function openPaystackPopup(options: OpenPaystackOptions): Promise<v
         return;
       }
     } catch (err) {
-      console.warn("Paystack V1 setup failed:", err);
+      console.warn("Paystack V1 setup failed, trying V2 fallback:", err);
     }
   }
 
-  throw new Error("Could not initialize Paystack popup. Please verify your Paystack Public Key in the Admin Portal and reload.");
+  // 2. Try Paystack V2 class pattern: new PaystackPop().newTransaction(...)
+  try {
+    if (typeof window.PaystackPop === "function") {
+      const paystackInstance = new window.PaystackPop();
+      if (paystackInstance && typeof paystackInstance.newTransaction === "function") {
+        paystackInstance.newTransaction({
+          key: cleanKey,
+          email: options.email,
+          amount: Math.round(options.amount),
+          currency: options.currency || "GHS",
+          ref: options.ref,
+          reference: options.ref,
+          firstname: options.firstname,
+          lastname: options.lastname,
+          phone: options.phone,
+          channels: options.channels || ["mobile_money", "card"],
+          metadata: options.metadata,
+          onSuccess: handleSuccess,
+          onCancel: handleCancel,
+        });
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("Paystack V2 newTransaction failed:", err);
+  }
+
+  throw new Error("Could not initialize Paystack popup. Please verify your Paystack Public Key in Staff Portal -> Financials & Payments and try again.");
 }
 
 /**
