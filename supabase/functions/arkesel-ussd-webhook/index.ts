@@ -21,6 +21,7 @@ interface UssdSessionState {
   quantity: number;
   network?: string | null;
   wallet_phone?: string | null;
+  reference?: string | null;
   metadata?: Record<string, any>;
   updated_at?: string;
 }
@@ -56,6 +57,45 @@ function normalizePhone(rawPhone: string) {
     local: cleaned,
     isValid: false,
   };
+}
+
+async function submitPaystackOtp(params: {
+  reference: string;
+  otp: string;
+  secretKey: string;
+}) {
+  const { reference, otp, secretKey } = params;
+  try {
+    const res = await fetch("https://api.paystack.co/charge/submit_otp", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${secretKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        reference: reference.trim(),
+        otp: otp.trim(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    console.log("Paystack submit OTP response:", JSON.stringify(data));
+    const isOk = Boolean(
+      data.status &&
+      (data.data?.status === "success" ||
+       data.data?.status === "pay_offline" ||
+       data.data?.status === "pending" ||
+       data.data?.status === "processed")
+    );
+    return {
+      success: isOk,
+      status: data.data?.status || (data.status ? "success" : "failed"),
+      message: data.data?.display_text || data.data?.message || data.message || "OTP response received",
+      result: data,
+    };
+  } catch (err) {
+    console.error("Paystack submit OTP error:", err);
+    return { success: false, status: "error", message: "Failed to submit OTP", result: null };
+  }
 }
 
 async function triggerMoMoPayment(params: {
@@ -147,7 +187,18 @@ async function triggerMoMoPayment(params: {
 
       const data = await res.json().catch(() => ({}));
       console.log("Paystack MoMo charge response:", JSON.stringify(data));
-      return { gateway: "paystack", success: Boolean(data.status), result: data };
+      
+      const chargeStatus = data.data?.status || "";
+      const requiresOtp = chargeStatus === "send_otp" || chargeStatus === "send_birthday";
+
+      return {
+        gateway: "paystack",
+        success: Boolean(data.status),
+        requiresOtp: requiresOtp,
+        message: data.data?.display_text || data.data?.message || data.message || "Payment authorization initiated",
+        reference: reference,
+        result: data,
+      };
     } catch (e) {
       console.error("Paystack MoMo charge error:", e);
     }
@@ -354,6 +405,7 @@ serve(async (req) => {
           quantity: nextState.quantity ?? 1,
           network: nextState.network ?? null,
           wallet_phone: nextState.wallet_phone ?? null,
+          reference: nextState.reference ?? null,
           metadata: nextState.metadata ?? {},
           updated_at: new Date().toISOString(),
         };
@@ -371,6 +423,10 @@ serve(async (req) => {
           userID: userId,
           message: message,
           continueSession: continueSession,
+          type: continueSession ? "Response" : "Release",
+          Type: continueSession ? "Response" : "Release",
+          action: continueSession ? "prompt" : "release",
+          status: continueSession ? "continue" : "end",
         }),
         {
           status: 200,
@@ -1110,7 +1166,7 @@ serve(async (req) => {
           amount: totalAmount,
           currency: "GHS",
           customer_name: `USSD Voter (${walletPhone})`,
-          customer_email: "ussd-voting@abcossa.org",
+          customer_email: `voter_${walletPhone}@abcossa.org`,
           customer_phone: walletPhone,
           payment_type: "voting",
           status: "pending",
@@ -1149,17 +1205,102 @@ serve(async (req) => {
           );
         }
 
+        // CRITICAL: Handle in-session OTP flow for Telecel Cash / Vodafone & AT Money
+        if (paymentResult.requiresOtp) {
+          return respondUSSD(
+            `Telecel Cash OTP / Voucher\n\n` +
+            `An OTP / Voucher has been sent via SMS to ${walletPhone}.\n\n` +
+            `Enter the OTP / Voucher code:\n\n` +
+            `00. Cancel`,
+            true,
+            {
+              ...(sessionState || {}),
+              current_step: "ENTER_OTP",
+              reference: trxRef,
+              wallet_phone: walletPhone,
+              quantity: voteCount,
+            }
+          );
+        }
+
+        // Standard USSD PIN push (MTN & direct telco push)
+        const isMTN = network.toLowerCase().includes("mtn");
+        const approvalGuide = isMTN
+          ? `(If missed, dial *170# -> 6. Approvals).`
+          : `(Check phone notifications for MoMo prompt).`;
+
         return respondUSSD(
           `Payment Prompt Sent!\n\n` +
-          `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\n\n` +
-          `Please enter your MoMo PIN to authorize payment.\n` +
-          `(MTN: Also check *170# -> 6. Approvals).\n\n` +
-          `Thank you for voting!`,
+          `Enter your MoMo PIN on ${walletPhone} to authorize ${formatGHS(totalAmount)}.\n` +
+          `${approvalGuide}\n\n` +
+          `Your votes will be credited immediately!`,
           false
         );
       } else {
         return respondUSSD("Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.", false);
       }
+    }
+
+    // =========================================================================
+    // Step 7B: ENTER_OTP -> Submit Telecel / AT OTP to Paystack
+    // =========================================================================
+    if (currentStep === "ENTER_OTP") {
+      if (userInput === "00") {
+        return respondUSSD("Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.", false);
+      }
+
+      const otp = userInput.trim();
+      const ref = sessionState?.reference || "";
+      const voteCount = sessionState?.quantity || 1;
+      const totalAmount = voteCount * votePrice;
+      const nomineeName = sessionState?.nominee_name || "Nominee";
+
+      // Fetch Paystack Secret Key
+      const { data: settingsRows } = await supabase
+        .from("site_settings")
+        .select("key, value")
+        .eq("key", "paystack_secret_key");
+      const secretKey = settingsRows?.[0]?.value || Deno.env.get("PAYSTACK_SECRET_KEY") || "";
+
+      if (!secretKey) {
+        return respondUSSD("Payment Gateway configuration error. Please try again shortly.", false);
+      }
+
+      const otpResult = await submitPaystackOtp({
+        reference: ref,
+        otp: otp,
+        secretKey: secretKey,
+      });
+
+      if (!otpResult.success && otpResult.status !== "pay_offline" && otpResult.status !== "pending") {
+        return respondUSSD(
+          `Invalid or Expired OTP.\n\n` +
+          `Please re-enter the OTP code sent to your phone:\n\n` +
+          `00. Cancel`,
+          true,
+          {
+            ...(sessionState || {}),
+            current_step: "ENTER_OTP",
+          }
+        );
+      }
+
+      // Mark payment as paid in database upon OTP success
+      await supabase
+        .from("payments")
+        .update({
+          status: "paid",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("client_reference", ref);
+
+      return respondUSSD(
+        `Payment Authorized!\n\n` +
+        `Your payment of ${formatGHS(totalAmount)} has been approved.\n\n` +
+        `${voteCount} vote(s) credited to ${nomineeName}!\n\n` +
+        `Thank you for voting!`,
+        false
+      );
     }
 
     // =========================================================================
