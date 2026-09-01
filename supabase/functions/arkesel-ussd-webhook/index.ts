@@ -681,13 +681,15 @@ serve(async (req) => {
             const userPhone = phoneInfo.local || "";
             const netInfo = detectNetworkFromPhone(userPhone);
 
+            const payThisPhoneLabel = userPhone
+              ? `1. Pay with this phone (${userPhone})\n2. Pay with a different number`
+              : `1. Enter MoMo Number to Pay`;
+
             return respondUSSD(
               `Vote Summary:\n` +
               `- Nominee: ${nominee.name} (#${nominee.nominee_code})\n` +
-              `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n` +
-              `- Wallet: ${userPhone ? `${userPhone} (${netInfo.name})` : "Enter Number"}\n\n` +
-              `1. Confirm & Pay\n` +
-              `2. Pay with other number\n\n` +
+              `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n\n` +
+              `${payThisPhoneLabel}\n\n` +
               `00. Back`,
               true,
               {
@@ -928,13 +930,15 @@ serve(async (req) => {
       const userPhone = phoneInfo.local || sessionState?.wallet_phone || "";
       const netInfo = detectNetworkFromPhone(userPhone);
 
+      const payThisPhoneLabel = userPhone
+        ? `1. Pay with this phone (${userPhone})\n2. Pay with a different number`
+        : `1. Enter MoMo Number to Pay`;
+
       return respondUSSD(
         `Vote Summary:\n` +
         `- Nominee: ${nomineeName} (#${nomineeCode})\n` +
-        `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n` +
-        `- Wallet: ${userPhone ? `${userPhone} (${netInfo.name})` : "Manual Entry"}\n\n` +
-        `1. Confirm & Pay\n` +
-        `2. Pay with other number\n\n` +
+        `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n\n` +
+        `${payThisPhoneLabel}\n\n` +
         `00. Back`,
         true,
         {
@@ -999,9 +1003,8 @@ serve(async (req) => {
       return respondUSSD(
         `Vote Summary:\n` +
         `- Nominee: ${nomineeName} (#${code})\n` +
-        `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n` +
-        `- Wallet: ${walletPhone} (${netInfo.name})\n\n` +
-        `1. Confirm & Pay\n` +
+        `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n\n` +
+        `1. Pay with ${walletPhone} (${netInfo.name})\n` +
         `2. Change Number\n\n` +
         `00. Back`,
         true,
