@@ -29,6 +29,25 @@ interface UssdSessionState {
 // In-memory fallback cache across warm isolate requests
 const inMemorySessions = new Map<string, UssdSessionState>();
 
+function detectNetworkFromPhone(phone: string, fallbackNetwork = "MTN"): { name: string; provider: string } {
+  const clean = phone.replace(/[^\d]/g, "");
+  const local = clean.startsWith("233") ? `0${clean.slice(3)}` : clean;
+  const prefix = local.slice(0, 3);
+
+  if (["024", "054", "055", "059", "053"].includes(prefix)) {
+    return { name: "MTN", provider: "mtn" };
+  } else if (["020", "050"].includes(prefix)) {
+    return { name: "Telecel", provider: "vod" };
+  } else if (["027", "057", "026"].includes(prefix)) {
+    return { name: "AT", provider: "tgo" };
+  }
+
+  const fb = fallbackNetwork.toLowerCase();
+  if (fb.includes("telecel") || fb.includes("vod")) return { name: "Telecel", provider: "vod" };
+  if (fb.includes("at") || fb.includes("tgo") || fb.includes("airtel")) return { name: "AT", provider: "tgo" };
+  return { name: "MTN", provider: "mtn" };
+}
+
 function normalizePhone(rawPhone: string) {
   const cleaned = String(rawPhone || "").trim().replace(/[^\d]/g, "");
   if (cleaned.startsWith("233") && cleaned.length === 12) {
@@ -659,21 +678,26 @@ serve(async (req) => {
             const voteCount = Math.max(1, parseInt(qtyStr, 10) || 1);
             const totalAmount = voteCount * votePrice;
 
+            const userPhone = phoneInfo.local || "";
+            const netInfo = detectNetworkFromPhone(userPhone);
+
             return respondUSSD(
-              `Nominee: ${nominee.name}\n` +
-              `Votes: ${voteCount} (${formatGHS(totalAmount)})\n\n` +
-              `Select Payment Network:\n` +
-              `1. MTN Mobile Money\n` +
-              `2. Telecel Cash\n` +
-              `3. AT Money\n\n` +
+              `Vote Summary:\n` +
+              `- Nominee: ${nominee.name} (#${nominee.nominee_code})\n` +
+              `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n` +
+              `- Wallet: ${userPhone ? `${userPhone} (${netInfo.name})` : "Enter Number"}\n\n` +
+              `1. Confirm & Pay\n` +
+              `2. Pay with other number\n\n` +
               `00. Back`,
               true,
               {
-                current_step: "SELECT_NETWORK",
+                current_step: "CONFIRM_VOTE",
                 candidate_code: nominee.nominee_code,
                 nominee_id: nominee.id,
                 nominee_name: nominee.name,
                 quantity: voteCount,
+                network: netInfo.name,
+                wallet_phone: userPhone,
               }
             );
           }
@@ -872,7 +896,7 @@ serve(async (req) => {
     }
 
     // =========================================================================
-    // Step 3: ENTER_VOTES -> SELECT_NETWORK
+    // Step 3: ENTER_VOTES -> Instant Auto-Detected Confirmation
     // =========================================================================
     if (currentStep === "ENTER_VOTES") {
       if (userInput === "00") {
@@ -900,182 +924,53 @@ serve(async (req) => {
 
       const totalAmount = voteCount * votePrice;
       const nomineeName = sessionState?.nominee_name || "Nominee";
+      const nomineeCode = sessionState?.candidate_code || "";
+      const userPhone = phoneInfo.local || sessionState?.wallet_phone || "";
+      const netInfo = detectNetworkFromPhone(userPhone);
 
       return respondUSSD(
-        `Nominee: ${nomineeName}\n` +
-        `Votes: ${voteCount} (${formatGHS(totalAmount)})\n\n` +
-        `Select Payment Network:\n` +
-        `1. MTN Mobile Money\n` +
-        `2. Telecel Cash\n` +
-        `3. AT Money\n\n` +
+        `Vote Summary:\n` +
+        `- Nominee: ${nomineeName} (#${nomineeCode})\n` +
+        `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n` +
+        `- Wallet: ${userPhone ? `${userPhone} (${netInfo.name})` : "Manual Entry"}\n\n` +
+        `1. Confirm & Pay\n` +
+        `2. Pay with other number\n\n` +
         `00. Back`,
         true,
         {
           ...(sessionState || {}),
-          current_step: "SELECT_NETWORK",
+          current_step: "CONFIRM_VOTE",
           quantity: voteCount,
+          network: netInfo.name,
+          wallet_phone: userPhone,
         }
       );
     }
 
     // =========================================================================
-    // Step 4: SELECT_NETWORK -> Check Phone & Prompt
+    // Step 6: ENTER_PHONE (Only when user explicitly selected Option 2)
     // =========================================================================
-    if (currentStep === "SELECT_NETWORK") {
+    if (currentStep === "ENTER_PHONE") {
       if (userInput === "00") {
-        return respondUSSD(
-          `Nominee: ${sessionState?.nominee_name || "Nominee"}\n` +
-          `Price: ${formatGHS(votePrice)} / vote\n\n` +
-          `Enter number of votes to cast:\n` +
-          `(e.g. 1, 5, 10, 20)\n\n` +
-          `00. Back`,
-          true,
-          {
-            ...(sessionState || {}),
-            current_step: "ENTER_VOTES",
-          }
-        );
-      }
-
-      let networkName = "MTN";
-      if (userInput === "1") networkName = "MTN";
-      else if (userInput === "2") networkName = "Telecel";
-      else if (userInput === "3") networkName = "AT";
-      else {
-        return respondUSSD(
-          `Invalid network option.\n\n` +
-          `Select Payment Network:\n` +
-          `1. MTN Mobile Money\n` +
-          `2. Telecel Cash\n` +
-          `3. AT Money\n\n` +
-          `00. Back`,
-          true,
-          {
-            ...(sessionState || {}),
-            current_step: "SELECT_NETWORK",
-          }
-        );
-      }
-
-      // If gateway provided a valid dialing phone number, ask for confirmation
-      if (phoneInfo.isValid && phoneInfo.local) {
-        return respondUSSD(
-          `Network: ${networkName} MoMo\n\n` +
-          `Pay with this number (${phoneInfo.local})?\n` +
-          `1. Yes, use this number\n` +
-          `2. No, use other wallet\n\n` +
-          `00. Back`,
-          true,
-          {
-            ...(sessionState || {}),
-            current_step: "CONFIRM_PHONE",
-            network: networkName,
-          }
-        );
-      }
-
-      // If NO valid phone detected from gateway, ask voter to type their number
-      return respondUSSD(
-        `Network: ${networkName} MoMo\n\n` +
-        `Enter 10-digit MoMo Number:\n` +
-        `(e.g. 0241234567)\n\n` +
-        `00. Back`,
-        true,
-        {
-          ...(sessionState || {}),
-          current_step: "ENTER_PHONE",
-          network: networkName,
-        }
-      );
-    }
-
-    // =========================================================================
-    // Step 5: CONFIRM_PHONE
-    // =========================================================================
-    if (currentStep === "CONFIRM_PHONE") {
-      if (userInput === "00") {
-        return respondUSSD(
-          `Select Payment Network:\n` +
-          `1. MTN Mobile Money\n` +
-          `2. Telecel Cash\n` +
-          `3. AT Money\n\n` +
-          `00. Back`,
-          true,
-          {
-            ...(sessionState || {}),
-            current_step: "SELECT_NETWORK",
-          }
-        );
-      }
-
-      if (userInput === "1") {
-        const walletPhone = phoneInfo.local;
         const voteCount = sessionState?.quantity || 1;
         const totalAmount = voteCount * votePrice;
         const nomineeName = sessionState?.nominee_name || "Nominee";
-        const code = sessionState?.candidate_code || "";
-        const netName = sessionState?.network || "MTN";
+        const nomineeCode = sessionState?.candidate_code || "";
+        const userPhone = phoneInfo.local || sessionState?.wallet_phone || "";
+        const netInfo = detectNetworkFromPhone(userPhone);
 
         return respondUSSD(
           `Vote Summary:\n` +
-          `- Nominee: ${nomineeName} (${code})\n` +
-          `- Quantity: ${voteCount} vote(s)\n` +
-          `- Total: ${formatGHS(totalAmount)}\n` +
-          `- Network: ${netName} MoMo\n` +
-          `- Wallet: ${walletPhone}\n\n` +
-          `1. Authorize & Pay\n` +
-          `2. Cancel\n\n` +
+          `- Nominee: ${nomineeName} (#${nomineeCode})\n` +
+          `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n` +
+          `- Wallet: ${userPhone ? `${userPhone} (${netInfo.name})` : "Manual Entry"}\n\n` +
+          `1. Confirm & Pay\n` +
+          `2. Pay with other number\n\n` +
           `00. Back`,
           true,
           {
             ...(sessionState || {}),
             current_step: "CONFIRM_VOTE",
-            wallet_phone: walletPhone,
-          }
-        );
-      }
-
-      if (userInput === "2") {
-        return respondUSSD(
-          `Enter 10-digit MoMo Number:\n` +
-          `(e.g. 0241234567)\n\n` +
-          `00. Back`,
-          true,
-          {
-            ...(sessionState || {}),
-            current_step: "ENTER_PHONE",
-          }
-        );
-      }
-
-      return respondUSSD(
-        `Please select an option:\n` +
-        `1. Yes, use this number (${phoneInfo.local})\n` +
-        `2. No, use other wallet\n\n` +
-        `00. Back`,
-        true,
-        {
-          ...(sessionState || {}),
-          current_step: "CONFIRM_PHONE",
-        }
-      );
-    }
-
-    // =========================================================================
-    // Step 6: ENTER_PHONE
-    // =========================================================================
-    if (currentStep === "ENTER_PHONE") {
-      if (userInput === "00") {
-        return respondUSSD(
-          `Select Payment Network:\n` +
-          `1. MTN Mobile Money\n` +
-          `2. Telecel Cash\n` +
-          `3. AT Money\n\n` +
-          `00. Back`,
-          true,
-          {
-            ...(sessionState || {}),
-            current_step: "SELECT_NETWORK",
           }
         );
       }
@@ -1095,27 +990,26 @@ serve(async (req) => {
       }
 
       const walletPhone = normalizedInput.local;
+      const netInfo = detectNetworkFromPhone(walletPhone);
       const voteCount = sessionState?.quantity || 1;
       const totalAmount = voteCount * votePrice;
       const nomineeName = sessionState?.nominee_name || "Nominee";
       const code = sessionState?.candidate_code || "";
-      const netName = sessionState?.network || "MTN";
 
       return respondUSSD(
         `Vote Summary:\n` +
-        `- Nominee: ${nomineeName} (${code})\n` +
-        `- Quantity: ${voteCount} vote(s)\n` +
-        `- Total: ${formatGHS(totalAmount)}\n` +
-        `- Network: ${netName} MoMo\n` +
-        `- Wallet: ${walletPhone}\n\n` +
-        `1. Authorize & Pay\n` +
-        `2. Cancel\n\n` +
+        `- Nominee: ${nomineeName} (#${code})\n` +
+        `- Votes: ${voteCount} (${formatGHS(totalAmount)})\n` +
+        `- Wallet: ${walletPhone} (${netInfo.name})\n\n` +
+        `1. Confirm & Pay\n` +
+        `2. Change Number\n\n` +
         `00. Back`,
         true,
         {
           ...(sessionState || {}),
           current_step: "CONFIRM_VOTE",
           wallet_phone: walletPhone,
+          network: netInfo.name,
         }
       );
     }
@@ -1126,15 +1020,28 @@ serve(async (req) => {
     if (currentStep === "CONFIRM_VOTE") {
       if (userInput === "00") {
         return respondUSSD(
-          `Select Payment Network:\n` +
-          `1. MTN Mobile Money\n` +
-          `2. Telecel Cash\n` +
-          `3. AT Money\n\n` +
+          `Nominee: ${sessionState?.nominee_name || "Nominee"}\n` +
+          `Price: ${formatGHS(votePrice)} / vote\n\n` +
+          `Enter number of votes to cast:\n` +
+          `(e.g. 1, 5, 10, 20)\n\n` +
           `00. Back`,
           true,
           {
             ...(sessionState || {}),
-            current_step: "SELECT_NETWORK",
+            current_step: "ENTER_VOTES",
+          }
+        );
+      }
+
+      if (userInput === "2") {
+        return respondUSSD(
+          `Enter 10-digit MoMo Number:\n` +
+          `(e.g. 0241234567)\n\n` +
+          `00. Back`,
+          true,
+          {
+            ...(sessionState || {}),
+            current_step: "ENTER_PHONE",
           }
         );
       }
