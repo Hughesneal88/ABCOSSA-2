@@ -43,12 +43,15 @@ export function useSessionTimeout({
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    // Track session start
+    // Reset activity timestamp on fresh login/auth
+    lastActivityRef.current = Date.now();
+
+    // Track session start cleanly
     const savedStart = localStorage.getItem("abcossa_admin_session_start");
-    if (savedStart) {
+    const now = Date.now();
+    if (savedStart && now - parseInt(savedStart, 10) < maxSessionLifetimeMs) {
       sessionStartTimeRef.current = parseInt(savedStart, 10);
     } else {
-      const now = Date.now();
       sessionStartTimeRef.current = now;
       localStorage.setItem("abcossa_admin_session_start", now.toString());
     }
@@ -69,11 +72,11 @@ export function useSessionTimeout({
 
     // Periodic check for inactivity and max session duration
     const checkInterval = setInterval(() => {
-      const now = Date.now();
-      const inactiveTime = now - lastActivityRef.current;
-      const totalSessionTime = now - sessionStartTimeRef.current;
+      const currentTime = Date.now();
+      const inactiveTime = currentTime - lastActivityRef.current;
+      const totalSessionTime = currentTime - sessionStartTimeRef.current;
 
-      // 1. Check max session lifetime (8 hours hard expiry)
+      // 1. Check max session lifetime (hard expiry)
       if (totalSessionTime >= maxSessionLifetimeMs) {
         clearInterval(checkInterval);
         handleSignOut();

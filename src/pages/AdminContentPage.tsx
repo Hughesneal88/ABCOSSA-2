@@ -49,6 +49,7 @@ import {
   type NomineeRow,
   type NomineePdfUpload,
   ensureDinnerAwardsData,
+  useRecalculateNomineeVotes,
 } from "@/hooks/useNominees";
 import {
   usePayments,
@@ -339,6 +340,7 @@ export default function AdminContentPage() {
       toast.error(error.message);
       return;
     }
+    localStorage.setItem("abcossa_admin_session_start", Date.now().toString());
     toast.success("Signed in");
     setPwdPassword("");
   };
@@ -362,9 +364,9 @@ export default function AdminContentPage() {
   }, [qc]);
 
   const { showWarning, secondsRemaining, extendSession } = useSessionTimeout({
-    inactivityTimeoutMs: 15 * 60 * 1000, // 15 minutes inactivity timeout
-    warningThresholdMs: 60 * 1000,       // 1 minute warning threshold
-    maxSessionLifetimeMs: 8 * 60 * 60 * 1000, // 8 hours max session lifetime
+    inactivityTimeoutMs: 30 * 60 * 1000, // 30 minutes inactivity timeout
+    warningThresholdMs: 2 * 60 * 1000,   // 2 minute warning threshold
+    maxSessionLifetimeMs: 12 * 60 * 60 * 1000, // 12 hours max session lifetime
     onTimeout: handleSessionTimeout,
     isAuthenticated: Boolean(user && isEditor),
   });
@@ -3187,6 +3189,7 @@ function ResearchAdminPanel({ userId }: { userId: string }) {
 
 function NomineesAdminPanel() {
   const qc = useQueryClient();
+  const recalculateVotesMutation = useRecalculateNomineeVotes();
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfTitle, setPdfTitle] = useState("");
   const [parsing, setParsing] = useState(false);
@@ -5034,6 +5037,7 @@ function PaymentsAdminPanel() {
   const reconcileMutation = useReconcilePendingPayments();
   const syncAllMutation = useSyncAllPaystack();
   const importCsvMutation = useImportPaystackCsv();
+  const recalculateVotesMutation = useRecalculateNomineeVotes();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -5516,6 +5520,34 @@ function PaymentsAdminPanel() {
                 <Upload className="w-3.5 h-3.5" />
               )}
               Import Paystack CSV
+            </Button>
+
+            {/* Re-tally Votes Button */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={recalculateVotesMutation.isPending}
+              onClick={() => {
+                toast.info("Recalculating and synchronizing votes across all paid transactions...");
+                recalculateVotesMutation.mutate(undefined, {
+                  onSuccess: (res) => {
+                    toast.success(res.message || "Votes re-tallied successfully!");
+                  },
+                  onError: (err) => {
+                    toast.error(err instanceof Error ? err.message : "Failed to re-tally votes");
+                  },
+                });
+              }}
+              className="text-xs font-semibold gap-1.5 h-8 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
+              title="Audit and synchronize nominee vote counts strictly from verified paid transactions"
+            >
+              {recalculateVotesMutation.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="w-3.5 h-3.5" />
+              )}
+              Re-tally Votes
             </Button>
 
             {/* Sync All with Paystack Button */}

@@ -509,3 +509,118 @@ export function useVoteNominee() {
     },
   });
 }
+
+/**
+ * Recalculates and synchronizes all nominee vote tallies strictly from verified paid transactions
+ */
+export function useRecalculateNomineeVotes() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (): Promise<{
+      totalPaidTransactions: number;
+      discrepanciesFixed: number;
+      nomineesProcessed: number;
+      message: string;
+    }> => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      // 1. Fetch vote price
+      const { data: priceSetting } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "vote_price_ghs")
+        .maybeSingle();
+      const votePrice = priceSetting?.value ? parseFloat(priceSetting.value) || 1.0 : 1.0;
+
+      // 2. Fetch all paid transactions
+      const { data: paidPayments = [], error: pErr } = await supabase
+        .from("payments")
+        .select("*")
+        .eq("status", "paid");
+
+      if (pErr) throw pErr;
+
+      // 3. Fetch all nominees
+      const { data: allNominees = [], error: nErr } = await supabase
+        .from("nominees")
+        .select("*");
+
+      if (nErr) throw nErr;
+
+      // Map nominees by ID and nominee_code
+      const nomineeById = new Map<string, NomineeRow>();
+      const nomineeByCode = new Map<string, NomineeRow>();
+      const nomineeByName = new Map<string, NomineeRow>();
+
+      (allNominees || []).forEach((n: NomineeRow) => {
+        nomineeById.set(n.id, n);
+        if (n.nominee_code) nomineeByCode.set(n.nominee_code.trim(), n);
+        if (n.name) nomineeByName.set(n.name.toLowerCase().trim(), n);
+      });
+
+      // 4. Aggregate true paid votes for each nominee ID
+      const computedVotes = new Map<string, number>();
+
+      (allNominees || []).forEach((n: NomineeRow) => {
+        computedVotes.set(n.id, 0);
+      });
+
+      (paidPayments || []).forEach((p: any) => {
+        const meta = p.metadata || {};
+        const nomineeId = meta.nominee_id;
+        const nomineeCode = meta.nominee_code ? String(meta.nominee_code).trim() : null;
+        const nomineeName = meta.nominee_name ? String(meta.nominee_name).toLowerCase().trim() : null;
+
+        let targetNominee: NomineeRow | undefined;
+        if (nomineeId && nomineeById.has(nomineeId)) {
+          targetNominee = nomineeById.get(nomineeId);
+        } else if (nomineeCode && nomineeByCode.has(nomineeCode)) {
+          targetNominee = nomineeByCode.get(nomineeCode);
+        } else if (nomineeName && nomineeByName.has(nomineeName)) {
+          targetNominee = nomineeByName.get(nomineeName);
+        }
+
+        if (targetNominee) {
+          const voteCount = Math.max(
+            1,
+            Number(
+              meta.votes_count ||
+              (p.amount > 0 ? Math.round(Number(p.amount) / votePrice) : 1)
+            )
+          );
+          const currentTally = computedVotes.get(targetNominee.id) || 0;
+          computedVotes.set(targetNominee.id, currentTally + voteCount);
+        }
+      });
+
+      // 5. Update any discrepancies in the nominees table
+      let discrepanciesFixed = 0;
+
+      for (const nominee of allNominees) {
+        const trueVoteCount = computedVotes.get(nominee.id) || 0;
+        if (Number(nominee.votes_count || 0) !== trueVoteCount) {
+          discrepanciesFixed++;
+          await supabase
+            .from("nominees")
+            .update({ votes_count: trueVoteCount })
+            .eq("id", nominee.id);
+        }
+      }
+
+      return {
+        totalPaidTransactions: paidPayments.length,
+        discrepanciesFixed,
+        nomineesProcessed: allNominees.length,
+        message: `Successfully recalculated votes across ${paidPayments.length} paid transactions. Fixed ${discrepanciesFixed} candidate tally discrepancies.`,
+      };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
+      queryClient.invalidateQueries({ queryKey: ["award-categories"] });
+    },
+  });
+}
+
