@@ -76,14 +76,14 @@ export function loadPaystackScript(): Promise<boolean> {
 
     const script = document.createElement("script");
     script.id = "paystack-inline-js";
-    script.src = "https://js.paystack.co/v2/inline.js";
+    script.src = "https://js.paystack.co/v1/inline.js";
     script.async = true;
     script.onload = () => resolve(true);
     script.onerror = () => {
-      // Fallback to v1 if v2 script fails to load
+      // Fallback to v2 if v1 script fails to load
       const fallbackScript = document.createElement("script");
-      fallbackScript.id = "paystack-inline-js-v1";
-      fallbackScript.src = "https://js.paystack.co/v1/inline.js";
+      fallbackScript.id = "paystack-inline-js-v2";
+      fallbackScript.src = "https://js.paystack.co/v2/inline.js";
       fallbackScript.async = true;
       fallbackScript.onload = () => resolve(true);
       fallbackScript.onerror = () => resolve(false);
@@ -97,11 +97,13 @@ export function loadPaystackScript(): Promise<boolean> {
  * Open Paystack popup supporting both V2 class and V1 setup patterns
  */
 export async function openPaystackPopup(options: OpenPaystackOptions): Promise<void> {
-  const cleanKey = String(options.key || "").trim();
+  const envKey = ((import.meta.env.VITE_PAYSTACK_PUBLIC_KEY as string) || "").trim();
+  const rawKey = String(options.key || "").trim() || envKey;
+  const cleanKey = rawKey.replace(/^["'`]|["'`]$/g, "");
 
   if (!cleanKey) {
     throw new Error(
-      "Paystack Public Key is missing. Please configure your Paystack Public Key (starting with pk_live_ or pk_test_) in the Staff Admin Portal."
+      "Paystack Public Key is missing. Please configure your Paystack Public Key (starting with pk_live_ or pk_test_) in the Staff Admin Portal or in your environment variables."
     );
   }
 

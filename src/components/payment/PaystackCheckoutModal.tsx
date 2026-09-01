@@ -66,7 +66,8 @@ export function PaystackCheckoutModal({
   const createPaymentMutation = useCreatePayment();
   const completePaymentMutation = useCompletePayment();
 
-  const publicKey = paystackSettings?.publicKey?.trim();
+  const envPublicKey = ((import.meta.env.VITE_PAYSTACK_PUBLIC_KEY as string) || "").trim();
+  const publicKey = (paystackSettings?.publicKey?.trim() || envPublicKey).replace(/^["'`]|["'`]$/g, "");
   const isConfigured = Boolean(publicKey && publicKey.length > 0);
   const isTestMode = Boolean(publicKey?.startsWith("pk_test_"));
 
