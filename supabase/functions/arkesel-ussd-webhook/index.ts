@@ -1160,19 +1160,34 @@ serve(async (req) => {
         // Standard USSD PIN push (MTN & direct telco push)
         const isMTN = network.toLowerCase().includes("mtn");
         const approvalGuide = isMTN
-          ? `(If missed, dial *170# -> 6. Approvals).`
+          ? `(If prompt is missed, dial *170# -> 6. Approvals).`
           : `(Check phone notifications for MoMo prompt).`;
 
         return respondUSSD(
           `Payment Prompt Sent!\n\n` +
-          `Enter your MoMo PIN on ${walletPhone} to authorize ${formatGHS(totalAmount)}.\n` +
+          `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\n\n` +
+          `Approve the prompt on your phone by entering your MoMo PIN.\n` +
           `${approvalGuide}\n\n` +
-          `Your votes will be credited immediately!`,
-          false
+          `(Do NOT enter PIN on this screen - tap OK to dismiss).`,
+          false,
+          {
+            ...(sessionState || {}),
+            current_step: "PAYMENT_SENT",
+          }
         );
       } else {
         return respondUSSD("Voting transaction cancelled.\n\nThank you for using ABCOSSA USSD.", false);
       }
+    }
+
+    // =========================================================================
+    // Step 7A: PAYMENT_SENT Guard (If telco sends trailing turn)
+    // =========================================================================
+    if (currentStep === "PAYMENT_SENT") {
+      return respondUSSD(
+        "Payment is already in progress on your phone.\n\nPlease enter your MoMo PIN on the telecom prompt to complete.\n\nThank you!",
+        false
+      );
     }
 
     // =========================================================================
