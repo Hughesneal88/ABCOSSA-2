@@ -138,6 +138,19 @@ serve(async (req) => {
         })
         .eq("client_reference", reference);
 
+      if (wasAlreadyPaid && nomineeId && votesCount > 0) {
+        const { data: nominee } = await supabase
+          .from("nominees")
+          .select("id, votes_count")
+          .eq("id", nomineeId)
+          .maybeSingle();
+
+        if (nominee) {
+          const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
+          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+        }
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
@@ -150,20 +163,44 @@ serve(async (req) => {
       );
     }
 
-    // Transaction not found or rejected on Paystack
+    // Transaction NOT FOUND on Paystack (or rejected) -> Mark as FAILED
+    await supabase
+      .from("payments")
+      .update({
+        status: "failed",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("client_reference", reference);
+
+    if (wasAlreadyPaid && nomineeId && votesCount > 0) {
+      const { data: nominee } = await supabase
+        .from("nominees")
+        .select("id, votes_count")
+        .eq("id", nomineeId)
+        .maybeSingle();
+
+      if (nominee) {
+        const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
+        await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+      }
+    }
+
     return new Response(
       JSON.stringify({
-        success: false,
-        status: "unverified",
-        verified: false,
-        message: result.message || "Transaction not found on Paystack.",
+        success: true,
+        status: "failed",
+        verified: true,
+        message: result.message || "Transaction reference was not found on Paystack. Marked as Failed.",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Error in paystack-verify edge function:", error);
+    console.error("Error verifying payment with Paystack:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Internal server error" }),
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : "Internal Server Error",
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
     );
   }

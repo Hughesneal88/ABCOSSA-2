@@ -489,6 +489,7 @@ export async function syncPaystackTransactionsDirectly(includeTest = false): Pro
   }
 
   // 5. Cross-reference remaining local pending records
+  let pendingFailedCount = 0;
   for (const localP of localPayments) {
     if (localP.status === "pending" && localP.client_reference) {
       const matchOnPaystack = paystackTransactions.find(
@@ -500,7 +501,12 @@ export async function syncPaystackTransactionsDirectly(includeTest = false): Pro
         if (newStatus !== "pending") {
           await supabase.from("payments").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", localP.id);
           if (newStatus === "paid") updatedPaidCount++;
+          if (newStatus === "failed") pendingFailedCount++;
         }
+      } else {
+        // If reference is not found in Paystack live list -> mark as failed
+        await supabase.from("payments").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", localP.id);
+        pendingFailedCount++;
       }
     }
   }
@@ -511,9 +517,10 @@ export async function syncPaystackTransactionsDirectly(includeTest = false): Pro
     matchedCount,
     importedCount,
     updatedPaidCount,
+    pendingFailedCount,
     votesCreditedTotal,
     testSkippedCount,
-    message: `Synchronized ${paystackTransactions.length} transactions from Paystack. (${updatedPaidCount} updated to Paid, ${importedCount} imported, ${votesCreditedTotal} votes credited).`,
+    message: `Synchronized ${paystackTransactions.length} transactions from Paystack. (${updatedPaidCount} marked Paid, ${pendingFailedCount} uninitiated marked Failed, ${importedCount} imported, ${votesCreditedTotal} votes credited).`,
   };
 }
 

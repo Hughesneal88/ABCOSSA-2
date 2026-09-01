@@ -193,7 +193,7 @@ serve(async (req) => {
               method: "GET",
               headers: { Authorization: `Bearer ${secretKey}` },
             });
-            const singleData = await singleRes.json();
+            const singleData = await singleRes.json().catch(() => ({}));
             if (singleData.status && singleData.data) {
               const domain = String(singleData.data.domain || "").toLowerCase();
               if (domain !== "test") {
@@ -205,8 +205,15 @@ serve(async (req) => {
                   if (newStatus === "failed") pendingFailedCount++;
                 }
               }
+            } else {
+              // Reference not found on Paystack -> Mark as failed
+              await supabase.from("payments").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", localP.id);
+              pendingFailedCount++;
             }
-          } catch (_) {}
+          } catch (_) {
+            await supabase.from("payments").update({ status: "failed", updated_at: new Date().toISOString() }).eq("id", localP.id);
+            pendingFailedCount++;
+          }
         }
       }
     }
