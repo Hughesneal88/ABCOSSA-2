@@ -183,6 +183,7 @@ async function triggerMoMoPayment(params: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(chargePayload),
+        signal: AbortSignal.timeout(2800),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -199,8 +200,19 @@ async function triggerMoMoPayment(params: {
         reference: reference,
         result: data,
       };
-    } catch (e) {
-      console.error("Paystack MoMo charge error:", e);
+    } catch (e: any) {
+      console.error("Paystack MoMo charge error / timeout:", e);
+      // If it was a network timeout, Paystack may still be processing the charge in background
+      if (e?.name === "TimeoutError" || String(e).includes("Timeout")) {
+        return {
+          gateway: "paystack",
+          success: true,
+          requiresOtp: false,
+          message: "Payment prompt dispatched to your phone.",
+          reference: reference,
+          result: { status: "pending", timeoutDispatched: true },
+        };
+      }
     }
   }
 
