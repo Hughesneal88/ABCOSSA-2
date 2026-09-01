@@ -1160,15 +1160,14 @@ serve(async (req) => {
         // Standard USSD PIN push (MTN & direct telco push)
         const isMTN = network.toLowerCase().includes("mtn");
         const approvalGuide = isMTN
-          ? `(If prompt is missed, dial *170# -> 6. Approvals).`
-          : `(Check phone notifications for MoMo prompt).`;
+          ? `(MTN: Also on *170# -> 6. Approvals)`
+          : `(Check phone notifications)`;
 
         return respondUSSD(
-          `Payment Prompt Sent!\n\n` +
-          `A prompt for ${formatGHS(totalAmount)} has been sent to ${walletPhone}.\n\n` +
-          `Approve the prompt on your phone by entering your MoMo PIN.\n` +
-          `${approvalGuide}\n\n` +
-          `(Do NOT enter PIN on this screen - tap OK to dismiss).`,
+          `Payment Prompt Sent!\n` +
+          `Authorize ${formatGHS(totalAmount)} on ${walletPhone} with your MoMo PIN.\n\n` +
+          `${approvalGuide}\n` +
+          `Tap OK to dismiss.`,
           false,
           {
             ...(sessionState || {}),
