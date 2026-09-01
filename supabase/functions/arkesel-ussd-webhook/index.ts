@@ -350,18 +350,32 @@ serve(async (req) => {
       `sess_${Date.now()}`
     ).trim();
 
-    // Dynamically parse user phone from gateway (no hardcoded default!)
-    const userId = String(
+    const rawGatewayUserId = String(
       payload.userID ||
       payload.userId ||
       payload.user_id ||
-      payload.msisdn ||
-      payload.phoneNumber ||
-      payload.phone ||
-      payload.Mobile ||
-      payload.sender ||
+      payload.SessionUserID ||
       ""
     ).trim();
+
+    // Prioritize actual subscriber phone number (MSISDN) over gateway account ID
+    const callerPhoneRaw = String(
+      payload.msisdn ||
+      payload.phoneNumber ||
+      payload.phone_number ||
+      payload.mobile ||
+      payload.Mobile ||
+      payload.phone ||
+      payload.sender ||
+      payload.customer_phone ||
+      payload.from ||
+      (rawGatewayUserId && /^(233|0)[0-9]{9,11}$/.test(rawGatewayUserId) ? rawGatewayUserId : "") ||
+      rawGatewayUserId ||
+      ""
+    ).trim();
+
+    const userId = callerPhoneRaw;
+    const phoneInfo = normalizePhone(callerPhoneRaw);
 
     const rawUserData = String(
       payload.userData ||
@@ -379,8 +393,6 @@ serve(async (req) => {
       payload.session_type ||
       "Response"
     ).trim();
-
-    const phoneInfo = normalizePhone(userId);
 
     // Save session helper across Multi-Tier storage
     const saveSession = async (state: UssdSessionState) => {
@@ -451,7 +463,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           sessionID: sessionId,
-          userID: userId,
+          userID: rawGatewayUserId || userId,
           message: message,
           continueSession: continueSession,
           type: continueSession ? "Response" : "Release",
