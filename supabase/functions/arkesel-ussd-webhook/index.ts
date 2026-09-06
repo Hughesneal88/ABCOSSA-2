@@ -202,20 +202,58 @@ async function triggerMoMoPayment(params: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(chargePayload),
-        signal: AbortSignal.timeout(2800),
+        signal: AbortSignal.timeout(5500),
       });
 
       const data = await res.json().catch(() => ({}));
       console.log("Paystack MoMo charge response:", JSON.stringify(data));
       
-      const chargeStatus = data.data?.status || "";
+      let finalStatus = data.data?.status || "";
+      let finalResponse = data.data?.gateway_response || data.data?.message || data.message || "";
+      let isSuccess = Boolean(data.status && data.data?.status !== "failed" && data.data?.status !== "declined");
+
+      // Quick verify to catch instant telco low-balance or limit rejections
+      if (isSuccess && (finalStatus === "pay_offline" || finalStatus === "pending")) {
+        try {
+          await new Promise((r) => setTimeout(r, 900));
+          const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${paystackKey}`,
+            },
+            signal: AbortSignal.timeout(1800),
+          });
+          const verifyData = await verifyRes.json().catch(() => ({}));
+          if (verifyData.data) {
+            const vStatus = verifyData.data.status || "";
+            const vResponse = verifyData.data.gateway_response || verifyData.data.message || "";
+            if (vStatus === "failed" || vStatus === "declined") {
+              finalStatus = vStatus;
+              finalResponse = vResponse || finalResponse;
+              isSuccess = false;
+            } else if (vResponse) {
+              finalResponse = vResponse;
+            }
+          }
+        } catch (_) {}
+      }
+
+      const rawCombined = `${finalResponse} ${finalStatus} ${data.message || ""}`.toUpperCase();
+      const isLowBalance =
+        rawCombined.includes("LOW_BALANCE") ||
+        rawCombined.includes("INSUFFICIENT") ||
+        rawCombined.includes("NOT ENOUGH BALANCE") ||
+        rawCombined.includes("PAYEE_LIMIT");
+
+      const chargeStatus = finalStatus || data.data?.status || "";
       const requiresOtp = chargeStatus === "send_otp" || chargeStatus === "send_birthday";
 
       return {
         gateway: "paystack",
-        success: Boolean(data.status),
+        success: isSuccess && !isLowBalance,
+        isLowBalance: isLowBalance,
         requiresOtp: requiresOtp,
-        message: data.data?.display_text || data.data?.message || data.message || "Payment authorization initiated",
+        message: finalResponse || data.data?.display_text || data.data?.message || data.message || "Payment authorization initiated",
         reference: reference,
         result: data,
       };
@@ -463,6 +501,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           sessionID: sessionId,
+          sessionId: sessionId,
           userID: rawGatewayUserId || userId,
           message: message,
           continueSession: continueSession,
@@ -676,7 +715,7 @@ serve(async (req) => {
               `Nominee: ${nominee.name}\n` +
               `Price: ${formatGHS(votePrice)} / vote\n\n` +
               `Enter number of votes to cast:\n` +
-              `(e.g. 1, 5, 10, 20)\n\n` +
+              `(e.g. 25, 50, 100, 250)\n\n` +
               `00. Back`,
               true,
               {
@@ -778,7 +817,7 @@ serve(async (req) => {
             `Nominee: ${nominee.name}\n` +
             `Price: ${formatGHS(votePrice)} / vote\n\n` +
             `Enter number of votes to cast:\n` +
-            `(e.g. 1, 5, 10, 20)\n\n` +
+            `(e.g. 25, 50, 100, 250)\n\n` +
             `00. Back`,
             true,
             {
@@ -896,7 +935,7 @@ serve(async (req) => {
         `Nominee: ${nominee.name}\n` +
         `Price: ${formatGHS(votePrice)} / vote\n\n` +
         `Enter number of votes to cast:\n` +
-        `(e.g. 1, 5, 10, 20)\n\n` +
+        `(e.g. 25, 50, 100, 250)\n\n` +
         `00. Back`,
         true,
         {
@@ -927,7 +966,7 @@ serve(async (req) => {
       const voteCount = parseInt(userInput, 10);
       if (isNaN(voteCount) || voteCount < 1) {
         return respondUSSD(
-          "Please enter a valid number of votes (e.g. 1, 5, 10):\n\n00. Back",
+          "Please enter a valid number of votes (e.g. 25, 50, 100):\n\n00. Back",
           true,
           {
             ...(sessionState || {}),
@@ -1038,7 +1077,7 @@ serve(async (req) => {
           `Nominee: ${sessionState?.nominee_name || "Nominee"}\n` +
           `Price: ${formatGHS(votePrice)} / vote\n\n` +
           `Enter number of votes to cast:\n` +
-          `(e.g. 1, 5, 10, 20)\n\n` +
+          `(e.g. 25, 50, 100, 250)\n\n` +
           `00. Back`,
           true,
           {
@@ -1128,8 +1167,17 @@ serve(async (req) => {
           );
         }
 
+        if (paymentResult.isLowBalance) {
+          return respondUSSD(
+            `Insufficient MoMo Balance!\n\n` +
+            `Your wallet has insufficient funds for ${formatGHS(totalAmount)} (plus telco fees).\n\n` +
+            `Please top up your MoMo account and try again.`,
+            false
+          );
+        }
+
         if (!paymentResult.success) {
-          const errMsg = paymentResult.result?.message || "Could not trigger network prompt.";
+          const errMsg = paymentResult.message || paymentResult.result?.message || "Could not trigger network prompt.";
           return respondUSSD(
             `Payment Notice:\n\n` +
             `${errMsg}\n\n` +
@@ -1159,15 +1207,10 @@ serve(async (req) => {
 
         // Standard USSD PIN push (MTN & direct telco push)
         const isMTN = network.toLowerCase().includes("mtn");
-        const approvalGuide = isMTN
-          ? `(MTN: Also on *170# -> 6. Approvals)`
-          : `(Check phone notifications)`;
+        const approvalGuide = isMTN ? "\n(Or dial *170# > 6 > 3)" : "";
 
         return respondUSSD(
-          `Payment Prompt Sent!\n` +
-          `Authorize ${formatGHS(totalAmount)} on ${walletPhone} with your MoMo PIN.\n\n` +
-          `${approvalGuide}\n` +
-          `Tap OK to dismiss.`,
+          `Prompt sent! Authorize ${formatGHS(totalAmount)} with your MoMo PIN.${approvalGuide}`,
           false,
           {
             ...(sessionState || {}),
@@ -1401,7 +1444,7 @@ serve(async (req) => {
             `Nominee: ${selectedNominee.name}\n` +
             `Price: ${formatGHS(votePrice)} / vote\n\n` +
             `Enter number of votes to cast:\n` +
-            `(e.g. 1, 5, 10, 20)\n\n` +
+            `(e.g. 25, 50, 100, 250)\n\n` +
             `00. Back`,
             true,
             {

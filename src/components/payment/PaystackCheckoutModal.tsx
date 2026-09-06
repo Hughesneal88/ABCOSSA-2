@@ -52,8 +52,8 @@ export function PaystackCheckoutModal({
   metadata = {},
 }: PaystackCheckoutModalProps) {
   const [open, setOpen] = useState(false);
-  const [votesCount, setVotesCount] = useState<number>(1);
-  const [amount, setAmount] = useState<number>(paymentType === "voting" ? (unitPrice * 1) : defaultAmount);
+  const [votesCount, setVotesCount] = useState<number>(25);
+  const [amount, setAmount] = useState<number>(paymentType === "voting" ? (unitPrice * 25) : (defaultAmount || 25));
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -274,7 +274,7 @@ export function PaystackCheckoutModal({
               <div className="space-y-2">
                 <Label className="text-xs font-semibold">Select Number of Votes</Label>
                 <div className="grid grid-cols-5 gap-1.5">
-                  {[1, 5, 10, 20, 50].map((count) => (
+                  {[25, 50, 100, 250, 500].map((count) => (
                     <Button
                       key={count}
                       type="button"
@@ -303,17 +303,34 @@ export function PaystackCheckoutModal({
                 </div>
               </div>
             ) : (
-              <div>
-                <Label className="text-xs">Amount (GHS)</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  step="any"
-                  value={amount}
-                  onChange={(e) => setAmount(Number(e.target.value))}
-                  className="mt-1 font-bold text-lg"
-                  required
-                />
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold">Select Amount (GHS)</Label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {[25, 50, 100, 250, 500].map((preset) => (
+                    <Button
+                      key={preset}
+                      type="button"
+                      variant={amount === preset ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setAmount(preset)}
+                      className="text-xs font-semibold h-8"
+                    >
+                      {preset}
+                    </Button>
+                  ))}
+                </div>
+                <div>
+                  <Label className="text-xs">Custom Amount (GHS)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    step="any"
+                    value={amount}
+                    onChange={(e) => setAmount(Number(e.target.value))}
+                    className="mt-1 font-bold text-lg"
+                    required
+                  />
+                </div>
               </div>
             )}
 
