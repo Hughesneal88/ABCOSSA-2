@@ -6,6 +6,8 @@ import {
   updatePaymentStatus,
   syncPaystackTransactionsDirectly,
   importPaystackCsv,
+  verifyPaymentTransaction,
+  type VerificationResult,
   type InitiatePaymentParams,
   type PaymentRecord,
 } from "@/lib/paystackClient";
@@ -327,40 +329,18 @@ export function useClearPendingPayments() {
   });
 }
 
-export interface VerificationResult {
-  reference: string;
-  success: boolean;
-  status: string;
-  message: string;
-  votesCredited?: boolean;
-  votesCount?: number;
-}
-
 export function useVerifyPaystackPayment() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (reference: string): Promise<VerificationResult> => {
-      if (!supabase) throw new Error("Supabase client is not available");
-
-      const { data, error } = await supabase.functions.invoke("paystack-verify", {
-        body: { reference: reference.trim() },
-      });
-
-      if (error) throw error;
-      return {
-        reference,
-        success: Boolean(data?.success),
-        status: data?.status || "unknown",
-        message: data?.message || "Verification finished",
-        votesCredited: data?.votesCredited,
-        votesCount: data?.votesCount,
-      };
+      return await verifyPaymentTransaction(reference);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
       queryClient.invalidateQueries({ queryKey: ["nominees"] });
       queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["award-categories"] });
     },
   });
 }
@@ -376,8 +356,6 @@ export function useReconcilePendingPayments() {
       unverifiedCount: number;
       votesCreditedTotal: number;
     }> => {
-      if (!supabase) throw new Error("Supabase client is not available");
-
       let paidCount = 0;
       let failedCount = 0;
       let unverifiedCount = 0;
@@ -385,19 +363,15 @@ export function useReconcilePendingPayments() {
 
       for (const p of paymentsToVerify) {
         try {
-          const { data, error } = await supabase.functions.invoke("paystack-verify", {
-            body: { reference: p.client_reference.trim() },
-          });
+          const res = await verifyPaymentTransaction(p.client_reference.trim(), p.id);
 
-          if (!error && data?.success) {
-            if (data.status === "paid") {
-              paidCount++;
-              if (data.votesCredited && data.votesCount) {
-                votesCreditedTotal += Number(data.votesCount);
-              }
-            } else if (data.status === "failed" || data.status === "cancelled") {
-              failedCount++;
+          if (res.status === "paid") {
+            paidCount++;
+            if (res.votesCredited && res.votesCount) {
+              votesCreditedTotal += Number(res.votesCount);
             }
+          } else if (res.status === "failed" || res.status === "cancelled") {
+            failedCount++;
           } else {
             unverifiedCount++;
           }
@@ -418,6 +392,7 @@ export function useReconcilePendingPayments() {
       queryClient.invalidateQueries({ queryKey: ["admin-payments"] });
       queryClient.invalidateQueries({ queryKey: ["nominees"] });
       queryClient.invalidateQueries({ queryKey: ["admin-nominees"] });
+      queryClient.invalidateQueries({ queryKey: ["award-categories"] });
     },
   });
 }

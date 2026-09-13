@@ -92,18 +92,9 @@ export default function NomineesPage() {
     );
   };
 
-  const handlePaidVoteSuccess = (nomineeId: string, currentVotes: number, votesToAdd: number) => {
-    voteMutation.mutate(
-      { nomineeId, currentVotes, voteIncrement: votesToAdd },
-      {
-        onSuccess: () => {
-          toast.success(`Successfully added ${votesToAdd} vote(s)! Thank you for supporting ABCOSSA awards.`);
-        },
-        onError: (err) => {
-          toast.error(err instanceof Error ? err.message : "Failed to record votes");
-        },
-      }
-    );
+  const handlePaidVoteSuccess = (votesAdded: number) => {
+    queryClient.invalidateQueries({ queryKey: ["nominees"] });
+    queryClient.invalidateQueries({ queryKey: ["award-categories"] });
   };
 
   // Category counts map
@@ -810,9 +801,15 @@ export default function NomineesPage() {
                             defaultAmount={votePrice}
                             unitPrice={votePrice}
                             paymentType="voting"
-                            metadata={{ nominee_id: nominee.id }}
+                            metadata={{
+                              nominee_id: nominee.id,
+                              nominee_name: nominee.name,
+                              nominee_code: nominee.nominee_code,
+                              category_id: nominee.category_id,
+                              category_title: categoryObj?.title,
+                            }}
                             onSuccess={(details) =>
-                              handlePaidVoteSuccess(nominee.id, nominee.votes_count, details?.votesCount ?? 1)
+                              handlePaidVoteSuccess(details?.votesCount ?? 1)
                             }
                             trigger={
                               <Button

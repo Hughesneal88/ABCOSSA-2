@@ -1,5 +1,17 @@
 import { useState, useEffect } from "react";
-import { ShieldCheck, Loader2, Smartphone, CreditCard, CheckCircle2, Lock, AlertTriangle, Heart } from "lucide-react";
+import {
+  ShieldCheck,
+  Loader2,
+  Smartphone,
+  CreditCard,
+  CheckCircle2,
+  Lock,
+  AlertTriangle,
+  Heart,
+  Clock,
+  XCircle,
+  RefreshCw,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,13 +35,14 @@ import {
 import { toast } from "sonner";
 import {
   useCreatePayment,
-  useCompletePayment,
+  useVerifyPaystackPayment,
   usePaystackSettings,
 } from "@/hooks/usePayments";
 import {
   formatGHS,
   openPaystackPopup,
   type PaymentChannel,
+  type VerificationResult,
 } from "@/lib/paystackClient";
 
 export interface PaystackCheckoutModalProps {
@@ -38,7 +51,7 @@ export interface PaystackCheckoutModalProps {
   unitPrice?: number;
   paymentType?: "dues" | "event" | "donation" | "voting";
   trigger?: React.ReactNode;
-  onSuccess?: (details?: { votesCount?: number; reference?: string }) => void;
+  onSuccess?: (details?: { votesCount?: number; reference?: string; verified?: boolean }) => void;
   metadata?: Record<string, unknown>;
 }
 
@@ -53,18 +66,21 @@ export function PaystackCheckoutModal({
 }: PaystackCheckoutModalProps) {
   const [open, setOpen] = useState(false);
   const [votesCount, setVotesCount] = useState<number>(25);
-  const [amount, setAmount] = useState<number>(paymentType === "voting" ? (unitPrice * 25) : (defaultAmount || 25));
+  const [amount, setAmount] = useState<number>(paymentType === "voting" ? unitPrice * 25 : defaultAmount || 25);
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [channel, setChannel] = useState<PaymentChannel>("mobile_money");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [completed, setCompleted] = useState(false);
   const [lastReference, setLastReference] = useState("");
+  const [createdPaymentId, setCreatedPaymentId] = useState<string>("");
 
   const { data: paystackSettings, isLoading: loadingSettings } = usePaystackSettings();
   const createPaymentMutation = useCreatePayment();
-  const completePaymentMutation = useCompletePayment();
+  const verifyPaymentMutation = useVerifyPaystackPayment();
 
   const envPublicKey = ((import.meta.env.VITE_PAYSTACK_PUBLIC_KEY as string) || "").trim();
   const publicKey = (paystackSettings?.publicKey?.trim() || envPublicKey).replace(/^["'`]|["'`]$/g, "");
@@ -82,6 +98,41 @@ export function PaystackCheckoutModal({
     const validCount = Math.max(1, Math.floor(count));
     setVotesCount(validCount);
     setAmount(validCount * (unitPrice > 0 ? unitPrice : 1));
+  };
+
+  const handleVerifyReference = async (ref: string, pId?: string, isManualCheck = false) => {
+    setIsVerifying(true);
+    try {
+      const res = await verifyPaymentMutation.mutateAsync(ref);
+      setVerificationResult(res);
+      setCompleted(true);
+
+      if (res.status === "paid") {
+        toast.success(
+          paymentType === "voting"
+            ? `Payment verified! ${res.votesCount || votesCount} vote(s) successfully counted.`
+            : "Payment verified successfully via Paystack!"
+        );
+        if (onSuccess) {
+          onSuccess({
+            votesCount: res.votesCount || (paymentType === "voting" ? votesCount : 1),
+            reference: ref,
+            verified: true,
+          });
+        }
+      } else if (res.status === "pending") {
+        if (isManualCheck) {
+          toast.info("Payment is still awaiting authorization on your phone. Please confirm the prompt.");
+        }
+      } else if (res.status === "failed" || res.status === "cancelled") {
+        toast.error("Payment was not completed or failed on Paystack. No votes were recorded.");
+      }
+    } catch (err) {
+      console.error("Verification failed:", err);
+      toast.error(err instanceof Error ? err.message : "Verification request failed");
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   const handlePay = async (e: React.FormEvent) => {
@@ -103,9 +154,10 @@ export function PaystackCheckoutModal({
     }
 
     setIsProcessing(true);
+    setVerificationResult(null);
 
     try {
-      // 1. Create pending transaction in database
+      // 1. Create PENDING transaction in database (votes remain pending)
       const totalVotes = paymentType === "voting" ? votesCount : 1;
       const { payment, reference } = await createPaymentMutation.mutateAsync({
         amount: Number(amount),
@@ -123,15 +175,16 @@ export function PaystackCheckoutModal({
       });
 
       setLastReference(reference);
+      setCreatedPaymentId(payment.id);
 
-      // Close the details modal to release Radix focus trap and backdrop so Paystack popup is fully interactive
+      // Close the modal temporarily so Paystack popup is interactive without Radix focus trap
       setOpen(false);
 
-      // 2. Trigger Paystack Popup (supports both V2 and V1 inline scripts)
+      // 2. Trigger Paystack Inline Popup
       await openPaystackPopup({
         key: publicKey!,
         email: customerEmail.trim(),
-        amount: Math.round(Number(amount) * 100), // Paystack accepts amount in pesewas
+        amount: Math.round(Number(amount) * 100), // Pesewas
         currency: paystackSettings?.currency || "GHS",
         ref: reference,
         firstname: customerName.trim().split(" ")[0] || customerName.trim(),
@@ -170,29 +223,16 @@ export function PaystackCheckoutModal({
           votes_count: totalVotes,
         },
         onSuccess: async (response) => {
-          try {
-            await completePaymentMutation.mutateAsync({
-              paymentId: payment.id,
-              transactionId: response.transaction || response.reference || response.trxref,
-              reference: response.reference || reference,
-              channel,
-            });
-
-            setCompleted(true);
-            toast.success("Payment completed successfully via Paystack!");
-            if (onSuccess) onSuccess({ votesCount: totalVotes, reference: response.reference || reference });
-          } catch (err) {
-            console.error("Error confirming payment:", err);
-            toast.success("Payment received! Updating vote tally...");
-            setCompleted(true);
-            if (onSuccess) onSuccess({ votesCount: totalVotes, reference: response.reference || reference });
-          } finally {
-            setIsProcessing(false);
-          }
-        },
-        onCancel: () => {
           setIsProcessing(false);
-          toast.info("Payment cancelled. No charge was made.");
+          setOpen(true);
+          const activeRef = response.reference || reference;
+          await handleVerifyReference(activeRef, payment.id, false);
+        },
+        onCancel: async () => {
+          setIsProcessing(false);
+          setOpen(true);
+          // Check if payment was authorized even if user closed the window
+          await handleVerifyReference(reference, payment.id, false);
         },
       });
     } catch (err) {
@@ -205,6 +245,7 @@ export function PaystackCheckoutModal({
 
   const handleReset = () => {
     setCompleted(false);
+    setVerificationResult(null);
     setOpen(false);
   };
 
@@ -245,24 +286,111 @@ export function PaystackCheckoutModal({
           </Alert>
         )}
 
-        {completed ? (
+        {/* State 1: Verifying with Paystack */}
+        {isVerifying ? (
+          <div className="text-center py-8 space-y-4">
+            <div className="relative mx-auto w-14 h-14 flex items-center justify-center">
+              <Loader2 className="w-12 h-12 text-primary animate-spin" />
+              <ShieldCheck className="w-6 h-6 text-primary absolute" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-foreground">Verifying with Paystack...</h3>
+              <p className="text-xs text-muted-foreground max-w-xs mx-auto mt-1">
+                Please wait while we verify your transaction status with Paystack. Votes are held pending until verified.
+              </p>
+            </div>
+            {lastReference && (
+              <div className="p-2 rounded-lg bg-muted/40 border border-border/40 text-[11px] font-mono text-muted-foreground inline-block">
+                Ref: {lastReference}
+              </div>
+            )}
+          </div>
+        ) : completed && verificationResult ? (
+          /* State 2: Verification Result (Paid, Pending, or Failed) */
           <div className="text-center py-6 space-y-4">
-            <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto animate-bounce" />
-            <h3 className="text-lg font-bold text-foreground">Payment Successful!</h3>
-            <p className="text-xs text-muted-foreground max-w-xs mx-auto">
-              Thank you, <span className="font-semibold text-foreground">{customerName}</span>. Your payment of{" "}
-              <span className="font-bold text-foreground">{formatGHS(amount)}</span> has been confirmed.
-              {paymentType === "voting" && (
-                <span className="block mt-1 text-emerald-600 dark:text-emerald-400 font-semibold">
-                  {votesCount} vote{votesCount > 1 ? "s" : ""} added to candidate!
-                </span>
-              )}
-            </p>
+            {verificationResult.status === "paid" ? (
+              <>
+                <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="w-8 h-8 animate-bounce" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-foreground">Payment Verified!</h3>
+                  <p className="text-xs text-muted-foreground max-w-xs mx-auto mt-1">
+                    Thank you, <span className="font-semibold text-foreground">{customerName}</span>. Your payment of{" "}
+                    <span className="font-bold text-foreground">{formatGHS(amount)}</span> has been confirmed by Paystack.
+                  </p>
+                  {paymentType === "voting" && (
+                    <div className="mt-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-semibold text-xs inline-flex items-center gap-2">
+                      <Heart className="w-4 h-4 fill-emerald-500 text-emerald-500" />
+                      <span>
+                        {verificationResult.votesCount || votesCount} vote(s) successfully counted!
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : verificationResult.status === "pending" ? (
+              <>
+                <div className="w-14 h-14 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400">
+                  <Clock className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-foreground">Payment Pending Authorization</h3>
+                  <p className="text-xs text-muted-foreground max-w-xs mx-auto mt-1">
+                    Your vote request has been created, but Paystack is still confirming your mobile money authorization.
+                  </p>
+                  <div className="mt-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 text-xs">
+                    <span className="font-semibold block">Votes are kept as pending:</span>
+                    Your {votesCount} vote(s) will be automatically credited once payment confirmation is received from Paystack.
+                  </div>
+                </div>
+                <div className="flex items-center justify-center gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={isVerifying}
+                    onClick={() => handleVerifyReference(lastReference, createdPaymentId, true)}
+                    className="text-xs font-semibold gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Re-check Status
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto text-rose-600 dark:text-rose-400">
+                  <XCircle className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-foreground">Payment Unsuccessful</h3>
+                  <p className="text-xs text-muted-foreground max-w-xs mx-auto mt-1">
+                    Paystack reported that the payment was cancelled or could not be verified. No votes were recorded.
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setCompleted(false);
+                      setVerificationResult(null);
+                    }}
+                    className="text-xs font-semibold"
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              </>
+            )}
+
             {lastReference && (
               <div className="p-2.5 rounded-lg bg-muted/40 border border-border/40 text-[11px] font-mono text-muted-foreground">
                 Ref: {lastReference}
               </div>
             )}
+
             <Button onClick={handleReset} className="w-full text-xs font-semibold">
               Done
             </Button>

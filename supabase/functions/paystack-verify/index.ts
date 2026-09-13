@@ -127,6 +127,29 @@ serve(async (req) => {
       );
     }
 
+    // If transaction exists on Paystack and is still pending / ongoing:
+    if (
+      result.status &&
+      (result.data?.status === "pending" ||
+        result.data?.status === "ongoing" ||
+        result.data?.status === "processing" ||
+        result.data?.status === "queued")
+    ) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          status: "pending",
+          verified: false,
+          votesCredited: false,
+          votesCount: 0,
+          payment: currentPayment,
+          paystackData: result.data,
+          message: "Payment is pending authorization on mobile money. Votes remain pending until confirmed.",
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // If transaction exists on Paystack but failed / abandoned:
     if (result.status && (result.data?.status === "failed" || result.data?.status === "abandoned")) {
       const paystackStatus = result.data.status === "abandoned" ? "failed" : result.data.status;

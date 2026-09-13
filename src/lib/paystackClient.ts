@@ -274,6 +274,266 @@ export async function createPaymentTransaction(params: InitiatePaymentParams): P
   }
 }
 
+export interface VerificationResult {
+  reference: string;
+  success: boolean;
+  status: "paid" | "pending" | "failed" | "cancelled" | "test_ignored" | "unknown" | string;
+  verified: boolean;
+  message: string;
+  votesCredited?: boolean;
+  votesCount?: number;
+  nomineeId?: string;
+  payment?: PaymentRecord | null;
+  paystackData?: Record<string, unknown>;
+}
+
+/**
+ * Verifies a transaction reference against Paystack and credits votes ONLY upon verified success.
+ * Tries Edge Function first, then falls back to direct Paystack verification API.
+ */
+export async function verifyPaymentTransaction(
+  reference: string,
+  paymentId?: string
+): Promise<VerificationResult> {
+  const cleanRef = (reference || "").trim();
+  if (!cleanRef) {
+    return {
+      reference: "",
+      success: false,
+      status: "unknown",
+      verified: false,
+      message: "Transaction reference is required for verification.",
+    };
+  }
+
+  // 1. Try Supabase Edge Function 'paystack-verify'
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase.functions.invoke("paystack-verify", {
+        body: { reference: cleanRef },
+      });
+
+      if (!error && data && typeof data === "object") {
+        return {
+          reference: cleanRef,
+          success: Boolean(data.success),
+          status: data.status || (data.success ? "paid" : "failed"),
+          verified: Boolean(data.verified),
+          message: data.message || (data.success ? "Verified successfully on Paystack" : "Verification completed"),
+          votesCredited: data.votesCredited,
+          votesCount: data.votesCount,
+          nomineeId: data.nomineeId,
+          payment: data.payment,
+          paystackData: data.paystackData,
+        };
+      }
+    } catch (edgeErr) {
+      console.warn("Edge function paystack-verify unavailable, using direct Paystack verification:", edgeErr);
+    }
+  }
+
+  // 2. Direct fallback verification using Paystack API and Supabase
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      reference: cleanRef,
+      success: false,
+      status: "unknown",
+      verified: false,
+      message: "Database connection not configured.",
+    };
+  }
+
+  try {
+    // A. Fetch Secret Key from site_settings
+    const { data: settingsData } = await supabase
+      .from("site_settings")
+      .select("key, value")
+      .in("key", ["paystack_secret_key", "paystack_public_key"]);
+
+    const settingsMap = Object.fromEntries(
+      (settingsData || []).map((r: { key: string; value: string }) => [r.key, r.value])
+    );
+
+    const secretKey = settingsMap["paystack_secret_key"]?.trim() || "";
+    const publicKey = settingsMap["paystack_public_key"]?.trim() || "";
+
+    if (!secretKey) {
+      return {
+        reference: cleanRef,
+        success: false,
+        status: "pending",
+        verified: false,
+        message: "Paystack Secret Key is not configured yet. The payment remains pending until verified.",
+      };
+    }
+
+    // B. Call Paystack Transaction Verify API
+    const paystackRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(cleanRef)}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const pData = await paystackRes.json();
+    const resultData = pData?.data;
+
+    // Check test transaction
+    const domain = String(resultData?.domain || "").toLowerCase();
+    const isTest = domain === "test" || cleanRef.toLowerCase().startsWith("test_");
+    const isTestConfig = secretKey.startsWith("sk_test_") || publicKey.startsWith("pk_test_");
+
+    if (isTest && !isTestConfig) {
+      return {
+        reference: cleanRef,
+        success: false,
+        status: "test_ignored",
+        verified: false,
+        message: "This is a Paystack sandbox test transaction and was ignored to preserve live vote data.",
+      };
+    }
+
+    // C. Fetch local payment record from Supabase
+    let query = supabase.from("payments").select("*");
+    if (paymentId) {
+      query = query.or(`id.eq.${paymentId},client_reference.eq.${cleanRef}`);
+    } else {
+      query = query.eq("client_reference", cleanRef);
+    }
+    const { data: localPayment } = await query.maybeSingle();
+
+    const wasAlreadyPaid = localPayment?.status === "paid";
+    const nomineeId = localPayment?.metadata?.nominee_id;
+    const votesCount = Number(localPayment?.metadata?.votes_count || 1);
+
+    // Case 1: Verified Paid
+    if (pData?.status && resultData?.status === "success") {
+      const trxId = String(resultData.id || resultData.reference || "");
+      const channel = String(resultData.channel || localPayment?.payment_channel || "mobile_money");
+
+      // Update payment record to 'paid'
+      const { data: updatedPayment } = await supabase
+        .from("payments")
+        .update({
+          status: "paid",
+          transaction_id: trxId,
+          payment_channel: channel,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("client_reference", cleanRef)
+        .select()
+        .maybeSingle();
+
+      // Idempotent: credit votes only if not previously paid
+      let votesCredited = false;
+      if (!wasAlreadyPaid && nomineeId && votesCount > 0) {
+        const { data: nominee } = await supabase
+          .from("nominees")
+          .select("id, votes_count")
+          .eq("id", nomineeId)
+          .maybeSingle();
+
+        if (nominee) {
+          const newVotes = (nominee.votes_count || 0) + votesCount;
+          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+          votesCredited = true;
+        }
+      }
+
+      return {
+        reference: cleanRef,
+        success: true,
+        status: "paid",
+        verified: true,
+        votesCredited,
+        votesCount: votesCredited ? votesCount : wasAlreadyPaid ? votesCount : 0,
+        nomineeId,
+        payment: (updatedPayment || localPayment) as PaymentRecord,
+        paystackData: resultData,
+        message: `Verified successfully as Paid on Paystack.${votesCredited ? ` Successfully credited ${votesCount} votes!` : ""}`,
+      };
+    }
+
+    // Case 2: Still Pending Authorization
+    if (
+      pData?.status &&
+      (resultData?.status === "pending" ||
+        resultData?.status === "ongoing" ||
+        resultData?.status === "processing" ||
+        resultData?.status === "queued")
+    ) {
+      return {
+        reference: cleanRef,
+        success: false,
+        status: "pending",
+        verified: false,
+        nomineeId,
+        payment: localPayment as PaymentRecord,
+        paystackData: resultData,
+        message: "Payment is still pending authorization on your phone. Your votes will be counted as soon as payment is confirmed by Paystack.",
+      };
+    }
+
+    // Case 3: Failed / Abandoned
+    if (pData?.status && (resultData?.status === "failed" || resultData?.status === "abandoned" || resultData?.status === "reversed")) {
+      const newStatus = resultData.status === "abandoned" ? "failed" : resultData.status;
+      await supabase
+        .from("payments")
+        .update({
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("client_reference", cleanRef);
+
+      // If it was mistakenly marked paid before, deduct votes
+      if (wasAlreadyPaid && nomineeId && votesCount > 0) {
+        const { data: nominee } = await supabase
+          .from("nominees")
+          .select("id, votes_count")
+          .eq("id", nomineeId)
+          .maybeSingle();
+
+        if (nominee) {
+          const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
+          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+        }
+      }
+
+      return {
+        reference: cleanRef,
+        success: false,
+        status: newStatus,
+        verified: true,
+        nomineeId,
+        payment: localPayment as PaymentRecord,
+        paystackData: resultData,
+        message: `Paystack confirms transaction was ${newStatus}: ${resultData.gateway_response || "Payment was not completed."}`,
+      };
+    }
+
+    // Case 4: Reference not found or error
+    return {
+      reference: cleanRef,
+      success: false,
+      status: "pending",
+      verified: false,
+      nomineeId,
+      payment: localPayment as PaymentRecord,
+      message: pData?.message || "Transaction is pending verification on Paystack.",
+    };
+  } catch (directErr) {
+    console.error("Direct Paystack verification failed:", directErr);
+    return {
+      reference: cleanRef,
+      success: false,
+      status: "pending",
+      verified: false,
+      message: directErr instanceof Error ? directErr.message : "Verification error occurred",
+    };
+  }
+}
+
 /**
  * Updates a payment record as paid after successful Paystack callback
  */

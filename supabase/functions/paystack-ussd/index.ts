@@ -92,11 +92,7 @@ serve(async (req) => {
     const voteCount = Math.max(1, parseInt(inputs[1], 10) || 1);
     const totalAmount = voteCount * unitPrice;
 
-    // Auto-credit votes
-    const newVotes = (nominee.votes_count || 0) + voteCount;
-    await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
-
-    // Record transaction
+    // Record transaction as PENDING (votes remain pending until Paystack confirms charge)
     await supabase.from("payments").insert({
       client_reference: `paystack_ussd_${session}`,
       transaction_id: `psk_ussd_${Date.now()}`,
@@ -106,7 +102,7 @@ serve(async (req) => {
       customer_email: "ussd-voting@abcossa.org",
       customer_phone: phone,
       payment_type: "voting",
-      status: "paid",
+      status: "pending",
       payment_channel: `ussd-paystack-${networkCode.toLowerCase()}`,
       description: `Paystack USSD Vote for ${nominee.name} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
       metadata: {
