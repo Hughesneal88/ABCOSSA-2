@@ -22,25 +22,33 @@ serve(async (req) => {
 
     const secretKey = settingsData?.[0]?.value || Deno.env.get("PAYSTACK_SECRET_KEY") || "";
 
-    // If secretKey is available, verify HMAC SHA512 signature
-    if (secretKey && signature) {
-      const encoder = new TextEncoder();
-      const keyData = encoder.encode(secretKey);
-      const cryptoKey = await crypto.subtle.importKey(
-        "raw",
-        keyData,
-        { name: "HMAC", hash: "SHA-512" },
-        false,
-        ["sign"]
-      );
-      const signatureBytes = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(rawBody));
-      const expectedSignature = Array.from(new Uint8Array(signatureBytes))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
+    // FIX: Reject webhook if no secret key is configured — never process unverified webhooks
+    if (!secretKey) {
+      console.error("WEBHOOK BLOCKED: No Paystack secret key configured. Cannot verify signature.");
+      return new Response("Webhook secret not configured", { status: 500 });
+    }
 
-      if (expectedSignature !== signature) {
-        return new Response("Invalid signature", { status: 400 });
-      }
+    // Verify HMAC SHA512 signature — REQUIRED, not optional
+    if (!signature) {
+      return new Response("Missing signature header", { status: 400 });
+    }
+
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secretKey);
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "HMAC", hash: "SHA-512" },
+      false,
+      ["sign"]
+    );
+    const signatureBytes = await crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(rawBody));
+    const expectedSignature = Array.from(new Uint8Array(signatureBytes))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    if (expectedSignature !== signature) {
+      return new Response("Invalid signature", { status: 400 });
     }
 
     const payload = JSON.parse(rawBody);
@@ -62,22 +70,22 @@ serve(async (req) => {
           .select()
           .maybeSingle();
 
-        // 2. If this was a voting payment, credit the nominee's votes
+        // 2. FIX: Use atomic RPC to credit votes — prevents double-crediting
         const nomineeId = updatedPayment?.metadata?.nominee_id || metadata?.nominee_id;
         const votesToAdd = Math.max(1, Number(updatedPayment?.metadata?.votes_count || metadata?.votes_count || 1));
 
-        if (nomineeId) {
-          const { data: nominee } = await supabase
-            .from("nominees")
-            .select("id, votes_count")
-            .eq("id", nomineeId)
-            .maybeSingle();
+        if (nomineeId && votesToAdd > 0 && updatedPayment?.id) {
+          const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+            p_payment_id: updatedPayment.id,
+            p_nominee_id: nomineeId,
+            p_votes_count: votesToAdd,
+          });
 
-          if (nominee) {
-            await supabase
-              .from("nominees")
-              .update({ votes_count: (nominee.votes_count || 0) + votesToAdd })
-              .eq("id", nominee.id);
+          // newCount is NULL if votes were already credited (idempotent)
+          if (newCount !== null) {
+            console.log(`Webhook: Credited ${votesToAdd} votes to nominee ${nomineeId}. New total: ${newCount}`);
+          } else {
+            console.log(`Webhook: Payment ${reference} votes already credited — skipped.`);
           }
         }
       }

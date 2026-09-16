@@ -193,32 +193,34 @@ export function useUpdatePaymentStatus() {
       const nomineeId = currentPayment.metadata?.nominee_id;
       const votesCount = Number(currentPayment.metadata?.votes_count || 0);
 
-      // 2. If status is changing and voting metadata exists:
+      // 2. FIX: Use atomic RPC for vote sync instead of non-atomic read-modify-write
       if (syncVotes && nomineeId && votesCount > 0 && oldStatus !== newStatus) {
-        // Case A: Changing TO "paid" from non-paid -> Credit votes
+        // Case A: Changing TO "paid" from non-paid -> Credit votes atomically
         if (newStatus === "paid" && oldStatus !== "paid") {
-          const { data: nominee } = await supabase
-            .from("nominees")
-            .select("id, votes_count")
-            .eq("id", nomineeId)
-            .maybeSingle();
+          const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+            p_payment_id: paymentId,
+            p_nominee_id: nomineeId,
+            p_votes_count: votesCount,
+          });
 
-          if (nominee) {
-            const newVotes = (nominee.votes_count || 0) + votesCount;
-            await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+          if (newCount !== null) {
+            console.log(`Admin: Credited ${votesCount} votes to nominee ${nomineeId}. New total: ${newCount}`);
+          } else {
+            console.log(`Admin: Payment ${paymentId} votes already credited — skipped.`);
           }
         }
-        // Case B: Changing FROM "paid" to non-paid -> Deduct votes
+        // Case B: Changing FROM "paid" to non-paid -> Deduct votes atomically
         else if (oldStatus === "paid" && newStatus !== "paid") {
-          const { data: nominee } = await supabase
-            .from("nominees")
-            .select("id, votes_count")
-            .eq("id", nomineeId)
-            .maybeSingle();
+          const { data: newCount } = await supabase.rpc("deduct_votes_atomic", {
+            p_payment_id: paymentId,
+            p_nominee_id: nomineeId,
+            p_votes_count: votesCount,
+          });
 
-          if (nominee) {
-            const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
-            await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+          if (newCount !== null) {
+            console.log(`Admin: Deducted ${votesCount} votes from nominee ${nomineeId}. New total: ${newCount}`);
+          } else {
+            console.log(`Admin: Payment ${paymentId} votes not yet credited — skipped deduction.`);
           }
         }
       }
@@ -251,6 +253,7 @@ export function useDeletePayment() {
     mutationFn: async ({ paymentId, deductVotes = false }: { paymentId: string; deductVotes?: boolean }) => {
       if (!supabase) throw new Error("Supabase client is not available");
 
+      // FIX: Use atomic RPC for vote deduction instead of non-atomic read-modify-write
       if (deductVotes) {
         const { data: payment } = await supabase
           .from("payments")
@@ -261,16 +264,15 @@ export function useDeletePayment() {
         const nomineeId = payment?.metadata?.nominee_id;
         const votesCount = Number(payment?.metadata?.votes_count || 0);
 
-        if (payment?.status === "paid" && nomineeId && votesCount > 0) {
-          const { data: nominee } = await supabase
-            .from("nominees")
-            .select("id, votes_count")
-            .eq("id", nomineeId)
-            .maybeSingle();
+        if (payment?.status === "paid" && nomineeId && votesCount > 0 && payment?.is_votes_credited) {
+          const { data: newCount } = await supabase.rpc("deduct_votes_atomic", {
+            p_payment_id: paymentId,
+            p_nominee_id: nomineeId,
+            p_votes_count: votesCount,
+          });
 
-          if (nominee) {
-            const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
-            await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
+          if (newCount !== null) {
+            console.log(`Delete: Deducted ${votesCount} votes from nominee ${nomineeId}. New total: ${newCount}`);
           }
         }
       }
@@ -453,7 +455,3 @@ export function useImportPaystackCsv() {
 // Backward compatibility wrappers
 export const useHubtelSettings = usePaystackSettings;
 export const useUpdateHubtelSettings = useUpdatePaystackSettings;
-
-
-
-

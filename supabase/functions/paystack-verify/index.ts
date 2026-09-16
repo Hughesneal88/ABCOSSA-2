@@ -74,7 +74,6 @@ serve(async (req) => {
       .eq("client_reference", reference)
       .maybeSingle();
 
-    const wasAlreadyPaid = currentPayment?.status === "paid";
     const nomineeId = currentPayment?.metadata?.nominee_id;
     const votesCount = Number(currentPayment?.metadata?.votes_count || 0);
 
@@ -96,19 +95,21 @@ serve(async (req) => {
         console.error("Database update error:", dbErr);
       }
 
-      // 2. Automatically credit votes to nominee if not already credited
+      // 2. FIX: Use atomic RPC to credit votes — prevents double-crediting
       let votesCredited = false;
-      if (!wasAlreadyPaid && nomineeId && votesCount > 0) {
-        const { data: nominee } = await supabase
-          .from("nominees")
-          .select("id, votes_count")
-          .eq("id", nomineeId)
-          .maybeSingle();
+      if (nomineeId && votesCount > 0 && updatedPayment?.id) {
+        const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+          p_payment_id: updatedPayment.id,
+          p_nominee_id: nomineeId,
+          p_votes_count: votesCount,
+        });
 
-        if (nominee) {
-          const newVotes = (nominee.votes_count || 0) + votesCount;
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+        // newCount is NULL if votes were already credited (idempotent)
+        if (newCount !== null) {
           votesCredited = true;
+          console.log(`Verify: Credited ${votesCount} votes to nominee ${nomineeId}. New total: ${newCount}`);
+        } else {
+          console.log(`Verify: Payment ${reference} votes already credited — skipped.`);
         }
       }
 
@@ -161,16 +162,16 @@ serve(async (req) => {
         })
         .eq("client_reference", reference);
 
-      if (wasAlreadyPaid && nomineeId && votesCount > 0) {
-        const { data: nominee } = await supabase
-          .from("nominees")
-          .select("id, votes_count")
-          .eq("id", nomineeId)
-          .maybeSingle();
+      // FIX: Use atomic RPC to deduct votes if previously credited
+      if (currentPayment?.is_votes_credited && nomineeId && votesCount > 0 && currentPayment?.id) {
+        const { data: newCount } = await supabase.rpc("deduct_votes_atomic", {
+          p_payment_id: currentPayment.id,
+          p_nominee_id: nomineeId,
+          p_votes_count: votesCount,
+        });
 
-        if (nominee) {
-          const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+        if (newCount !== null) {
+          console.log(`Verify: Deducted ${votesCount} votes from nominee ${nomineeId}. New total: ${newCount}`);
         }
       }
 
@@ -195,16 +196,16 @@ serve(async (req) => {
       })
       .eq("client_reference", reference);
 
-    if (wasAlreadyPaid && nomineeId && votesCount > 0) {
-      const { data: nominee } = await supabase
-        .from("nominees")
-        .select("id, votes_count")
-        .eq("id", nomineeId)
-        .maybeSingle();
+    // FIX: Use atomic RPC to deduct votes if previously credited
+    if (currentPayment?.is_votes_credited && nomineeId && votesCount > 0 && currentPayment?.id) {
+      const { data: newCount } = await supabase.rpc("deduct_votes_atomic", {
+        p_payment_id: currentPayment.id,
+        p_nominee_id: nomineeId,
+        p_votes_count: votesCount,
+      });
 
-      if (nominee) {
-        const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
-        await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+      if (newCount !== null) {
+        console.log(`Verify: Deducted ${votesCount} votes from nominee ${nomineeId}. New total: ${newCount}`);
       }
     }
 

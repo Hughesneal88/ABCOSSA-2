@@ -28,6 +28,7 @@ export interface PaymentRecord {
   payment_channel: string | null;
   description: string | null;
   metadata: Record<string, unknown>;
+  is_votes_credited: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -99,7 +100,7 @@ export function loadPaystackScript(): Promise<boolean> {
 export async function openPaystackPopup(options: OpenPaystackOptions): Promise<void> {
   const envKey = ((import.meta.env.VITE_PAYSTACK_PUBLIC_KEY as string) || "").trim();
   const rawKey = String(options.key || "").trim() || envKey;
-  const cleanKey = rawKey.replace(/^["'`]|["'`]$/g, "");
+  const cleanKey = rawKey.replace(/^[\"'`]|[\"'`]$/g, "");
 
   if (!cleanKey) {
     throw new Error(
@@ -234,6 +235,7 @@ export async function createPaymentTransaction(params: InitiatePaymentParams): P
     payment_channel: params.paymentChannel || "mobile_money",
     description: params.description || `${params.paymentType.toUpperCase()} payment for ${params.customerName}`,
     metadata: params.metadata || {},
+    is_votes_credited: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -290,6 +292,7 @@ export interface VerificationResult {
 /**
  * Verifies a transaction reference against Paystack and credits votes ONLY upon verified success.
  * Tries Edge Function first, then falls back to direct Paystack verification API.
+ * Uses atomic RPC (credit_votes_atomic) to prevent double-crediting and race conditions.
  */
 export async function verifyPaymentTransaction(
   reference: string,
@@ -403,7 +406,6 @@ export async function verifyPaymentTransaction(
     }
     const { data: localPayment } = await query.maybeSingle();
 
-    const wasAlreadyPaid = localPayment?.status === "paid";
     const nomineeId = localPayment?.metadata?.nominee_id;
     const votesCount = Number(localPayment?.metadata?.votes_count || 1);
 
@@ -425,18 +427,17 @@ export async function verifyPaymentTransaction(
         .select()
         .maybeSingle();
 
-      // Idempotent: credit votes only if not previously paid
+      // FIX: Use atomic RPC to credit votes — prevents double-crediting
       let votesCredited = false;
-      if (!wasAlreadyPaid && nomineeId && votesCount > 0) {
-        const { data: nominee } = await supabase
-          .from("nominees")
-          .select("id, votes_count")
-          .eq("id", nomineeId)
-          .maybeSingle();
+      if (nomineeId && votesCount > 0 && updatedPayment?.id) {
+        const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+          p_payment_id: updatedPayment.id,
+          p_nominee_id: nomineeId,
+          p_votes_count: votesCount,
+        });
 
-        if (nominee) {
-          const newVotes = (nominee.votes_count || 0) + votesCount;
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+        // newCount is NULL if votes were already credited (idempotent)
+        if (newCount !== null) {
           votesCredited = true;
         }
       }
@@ -447,7 +448,7 @@ export async function verifyPaymentTransaction(
         status: "paid",
         verified: true,
         votesCredited,
-        votesCount: votesCredited ? votesCount : wasAlreadyPaid ? votesCount : 0,
+        votesCount: votesCredited ? votesCount : 0,
         nomineeId,
         payment: (updatedPayment || localPayment) as PaymentRecord,
         paystackData: resultData,
@@ -486,17 +487,16 @@ export async function verifyPaymentTransaction(
         })
         .eq("client_reference", cleanRef);
 
-      // If it was mistakenly marked paid before, deduct votes
-      if (wasAlreadyPaid && nomineeId && votesCount > 0) {
-        const { data: nominee } = await supabase
-          .from("nominees")
-          .select("id, votes_count")
-          .eq("id", nomineeId)
-          .maybeSingle();
+      // FIX: Use atomic RPC to deduct votes if previously credited
+      if (localPayment?.is_votes_credited && nomineeId && votesCount > 0 && localPayment?.id) {
+        const { data: newCount } = await supabase.rpc("deduct_votes_atomic", {
+          p_payment_id: localPayment.id,
+          p_nominee_id: nomineeId,
+          p_votes_count: votesCount,
+        });
 
-        if (nominee) {
-          const newVotes = Math.max(0, (nominee.votes_count || 0) - votesCount);
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+        if (newCount !== null) {
+          console.log(`Direct verify: Deducted ${votesCount} votes from nominee ${nomineeId}. New total: ${newCount}`);
         }
       }
 
@@ -592,6 +592,7 @@ export async function updatePaymentStatus(
 
 /**
  * Directly synchronizes and reconciles all transactions from Paystack account into Supabase
+ * Uses atomic RPC (credit_votes_atomic) to prevent double-crediting and race conditions.
  */
 export async function syncPaystackTransactionsDirectly(includeTest = false): Promise<{
   success: boolean;
@@ -709,20 +710,17 @@ export async function syncPaystackTransactionsDirectly(includeTest = false): Pro
           })
           .eq("id", existing.id);
 
-        if (!wasPaid && isSuccess) {
-          updatedPaidCount++;
-          if (nomineeId && votesCount > 0) {
-            const { data: nominee } = await supabase
-              .from("nominees")
-              .select("id, votes_count")
-              .eq("id", nomineeId)
-              .maybeSingle();
+        // FIX: Use atomic RPC to credit votes
+        if (!wasPaid && isSuccess && nomineeId && votesCount > 0 && existing.id) {
+          const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+            p_payment_id: existing.id,
+            p_nominee_id: nomineeId,
+            p_votes_count: votesCount,
+          });
 
-            if (nominee) {
-              const newVotes = (nominee.votes_count || 0) + votesCount;
-              await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
-              votesCreditedTotal += votesCount;
-            }
+          if (newCount !== null) {
+            updatedPaidCount++;
+            votesCreditedTotal += votesCount;
           }
         }
       }
@@ -746,18 +744,21 @@ export async function syncPaystackTransactionsDirectly(includeTest = false): Pro
         updated_at: new Date().toISOString(),
       };
 
-      await supabase.from("payments").insert(newRecord);
+      const { data: insertedPayment } = await supabase
+        .from("payments")
+        .insert(newRecord)
+        .select("id")
+        .maybeSingle();
 
-      if (nomineeId && votesCount > 0) {
-        const { data: nominee } = await supabase
-          .from("nominees")
-          .select("id, votes_count")
-          .eq("id", nomineeId)
-          .maybeSingle();
+      // FIX: Use atomic RPC to credit votes
+      if (nomineeId && votesCount > 0 && insertedPayment?.id) {
+        const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+          p_payment_id: insertedPayment.id,
+          p_nominee_id: nomineeId,
+          p_votes_count: votesCount,
+        });
 
-        if (nominee) {
-          const newVotes = (nominee.votes_count || 0) + votesCount;
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
+        if (newCount !== null) {
           votesCreditedTotal += votesCount;
         }
       }
@@ -830,6 +831,7 @@ function parseCsvLine(text: string): string[] {
 
 /**
  * Imports and updates records from a Paystack CSV export file
+ * Uses atomic RPC (credit_votes_atomic) to prevent double-crediting and race conditions.
  */
 export async function importPaystackCsv(
   csvText: string,
@@ -961,23 +963,20 @@ export async function importPaystackCsv(
           })
           .eq("id", existing.id);
 
+        // FIX: Use atomic RPC to credit votes
         if (!wasPaid && isSuccess) {
           updatedPaid++;
           const targetNomineeId = existing.metadata?.nominee_id || nomineeId;
           const targetVotes = Number(existing.metadata?.votes_count || votesCount);
 
-          if (targetNomineeId && targetVotes > 0) {
-            const { data: nominee } = await supabase
-              .from("nominees")
-              .select("id, votes_count")
-              .eq("id", targetNomineeId)
-              .maybeSingle();
+          if (targetNomineeId && targetVotes > 0 && existing.id) {
+            const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+              p_payment_id: existing.id,
+              p_nominee_id: targetNomineeId,
+              p_votes_count: targetVotes,
+            });
 
-            if (nominee) {
-              await supabase
-                .from("nominees")
-                .update({ votes_count: (nominee.votes_count || 0) + targetVotes })
-                .eq("id", targetNomineeId);
+            if (newCount !== null) {
               votesCredited += targetVotes;
             }
           }
@@ -1002,20 +1001,21 @@ export async function importPaystackCsv(
         updated_at: new Date().toISOString(),
       };
 
-      await supabase.from("payments").insert(newRecord);
+      const { data: insertedPayment } = await supabase
+        .from("payments")
+        .insert(newRecord)
+        .select("id")
+        .maybeSingle();
 
-      if (nomineeId && votesCount > 0) {
-        const { data: nominee } = await supabase
-          .from("nominees")
-          .select("id, votes_count")
-          .eq("id", nomineeId)
-          .maybeSingle();
+      // FIX: Use atomic RPC to credit votes
+      if (nomineeId && votesCount > 0 && insertedPayment?.id) {
+        const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+          p_payment_id: insertedPayment.id,
+          p_nominee_id: nomineeId,
+          p_votes_count: votesCount,
+        });
 
-        if (nominee) {
-          await supabase
-            .from("nominees")
-            .update({ votes_count: (nominee.votes_count || 0) + votesCount })
-            .eq("id", nomineeId);
+        if (newCount !== null) {
           votesCredited += votesCount;
         }
       }
