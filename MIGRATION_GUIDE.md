@@ -247,5 +247,75 @@ DROP INDEX IF EXISTS public.idx_payments_is_votes_credited;
 | "function already exists" | Normal — `CREATE OR REPLACE` handles this. The function was updated. |
 | "column already exists" | Normal — `ADD COLUMN IF NOT EXISTS` handles this. The column was already added. |
 | App crashes after migration | Check that the frontend has been redeployed by Netlify |
-| Votes still seem wrong | Run the verification query in Step 3 to check backfill counts |
+| Votes still seem wrong | Use the **Recalculate Votes** button in the admin dashboard (see below) |
 | "permission denied for function" | Run the GRANT statements in Step 4 again |
+
+---
+
+## Fixing Existing Inflated Votes
+
+After running the migration above, the **atomic functions prevent new double-counting**. But votes that were already inflated before the fix are still wrong. There are two ways to fix them, in order of preference:
+
+### Option A: Admin Dashboard "Recalculate Votes" Button (Try This First)
+
+The admin dashboard has a built-in **Recalculate Votes** button that:
+1. Fetches all paid voting transactions from the database
+2. Sums up the votes for each nominee from those transactions
+3. Overwrites each nominee's `votes_count` with the correct total
+
+**How to use it:**
+1. Go to the **Staff Portal** → **Dinner Awards** section
+2. Click the **Recalculate Votes** button
+3. The button will show how many discrepancies were fixed
+4. Check the nominees page to confirm the counts look right
+
+**When to use this:**
+- This is the **recommended first step** for most situations
+- It handles the majority of inflation cases automatically
+- It's safe to run multiple times (idempotent)
+- It runs from the browser, so it uses the same logic as the app
+
+**Limitations:**
+- If the database has a large number of payments (>1000), the client-side recalculation may time out
+- It depends on the `payments` table having correct `metadata->>'nominee_id'` values — if some payments have missing nominee IDs, those votes won't be counted
+
+### Option B: SQL Diagnostic & Correction Script (Last Resort)
+
+If the dashboard button doesn't fix the issue, or you need to see exactly what's wrong before making changes, use the SQL diagnostic script at `supabase/migrations/20260916130000_diagnose_and_fix_inflated_votes.sql`.
+
+**When to use this:**
+- The Recalculate Votes button ran but votes still look wrong
+- You need to **see** the discrepancies before fixing them (the script shows per-nominee inflation/deficit)
+- You suspect edge-case issues (missing nominee IDs in metadata, duplicate payments, etc.)
+- You want a database-level guarantee that the fix is correct
+
+**How to run it:**
+
+1. Open **Supabase Dashboard** → **SQL Editor** → **New query**
+2. Copy **Part 1 (Diagnosis)** from the script and run it
+3. Review the results:
+   - Query 1C shows which nominees are INFLATED, DEFICIT, or CORRECT
+   - Query 1D shows payments credited but not yet paid (fake votes)
+   - Query 1E shows duplicate payments (double-credits)
+   - Query 1G shows the total inflation summary
+4. If the diagnosis confirms problems, uncomment **Part 2 (Correction)** and run it
+5. Run Part 1 again to verify all discrepancies are fixed
+
+**Important notes about Part 2:**
+- Part 2 **resets all nominee votes to 0** then recalculates from scratch
+- It only counts votes from payments where `status = 'paid' AND is_votes_credited = true`
+- It's safe to run multiple times (idempotent)
+- After running, verify the results with the verification query at the end of Part 2
+
+**Part 3** (edge cases) is optional — only uncomment it if you see payments with `nominee_code` or `nominee_name` in metadata but no `nominee_id`.
+
+### Which Option Should I Use?
+
+| Situation | Use |
+|-----------|-----|
+| First time fixing after migration | **Option A** — Dashboard button |
+| Dashboard button didn't fully fix it | **Option B** — SQL script |
+| Need to see exactly what's inflated before fixing | **Option B** — SQL script Part 1 |
+| Want to verify the dashboard fix was correct | **Option B** — SQL script Part 1 only |
+| Large database (>1000 payments) | **Option B** — SQL script (client-side may time out) |
+| Payments have missing nominee_id in metadata | **Option B** — SQL script (handles lookup by code/name too) |
