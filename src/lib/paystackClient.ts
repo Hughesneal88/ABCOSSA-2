@@ -55,7 +55,10 @@ declare global {
 }
 
 /**
- * Dynamically loads the Paystack Inline JS script
+ * Dynamically loads the Paystack Inline JS script.
+ * Paystack deprecated Inline V1 (js.paystack.co/v1/inline.js); V2 is the
+ * currently supported library, so V2 is loaded as the primary script and V1
+ * is kept only as a last-resort fallback for clients with a cached V1 copy.
  */
 export function loadPaystackScript(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -70,21 +73,23 @@ export function loadPaystackScript(): Promise<boolean> {
         resolve(true);
         return;
       }
-      existingScript.addEventListener("load", () => resolve(true));
-      existingScript.addEventListener("error", () => resolve(false));
+      const onLoad = () => resolve(true);
+      const onError = () => resolve(false);
+      existingScript.addEventListener("load", onLoad);
+      existingScript.addEventListener("error", onError);
       return;
     }
 
     const script = document.createElement("script");
     script.id = "paystack-inline-js";
-    script.src = "https://js.paystack.co/v1/inline.js";
+    script.src = "https://js.paystack.co/v2/inline.js";
     script.async = true;
     script.onload = () => resolve(true);
     script.onerror = () => {
-      // Fallback to v2 if v1 script fails to load
+      // Fallback to v1 if v2 script fails to load
       const fallbackScript = document.createElement("script");
-      fallbackScript.id = "paystack-inline-js-v2";
-      fallbackScript.src = "https://js.paystack.co/v2/inline.js";
+      fallbackScript.id = "paystack-inline-js-v1";
+      fallbackScript.src = "https://js.paystack.co/v1/inline.js";
       fallbackScript.async = true;
       fallbackScript.onload = () => resolve(true);
       fallbackScript.onerror = () => resolve(false);
@@ -134,20 +139,46 @@ export async function openPaystackPopup(options: OpenPaystackOptions): Promise<v
     options.onCancel();
   };
 
-  // 1. Try Paystack V1 setup pattern: PaystackPop.setup({...}).openIframe() (universally reliable)
+  const payload = {
+    key: cleanKey,
+    email: options.email,
+    amount: Math.round(options.amount), // in pesewas
+    currency: options.currency || "GHS",
+    ref: options.ref,
+    reference: options.ref,
+    firstname: options.firstname,
+    lastname: options.lastname,
+    phone: options.phone,
+    channels: options.channels?.length ? options.channels : ["mobile_money"],
+    metadata: options.metadata,
+  };
+
+  // 1. PRIMARY: Paystack Popup V2 — new PaystackPop().newTransaction(...)
+  //    V2 is the currently supported API. It initializes the transaction
+  //    directly against Paystack's checkout, so the mobile-money USSD prompt
+  //    (GHS) is dispatched reliably by Paystack instead of a deprecated path.
+  try {
+    if (typeof window.PaystackPop === "function") {
+      const paystackInstance = new (window.PaystackPop as any)();
+      if (paystackInstance && typeof paystackInstance.newTransaction === "function") {
+        paystackInstance.newTransaction({
+          ...payload,
+          onSuccess: handleSuccess,
+          onCancel: handleCancel,
+        });
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("Paystack V2 newTransaction failed, trying V1 fallback:", err);
+  }
+
+  // 2. FALLBACK: Paystack Popup V1 setup pattern: PaystackPop.setup({...}).openIframe()
+  //    Kept only for sessions that already cached the deprecated V1 script.
   if (window.PaystackPop && typeof window.PaystackPop.setup === "function") {
     try {
       const handler = window.PaystackPop.setup({
-        key: cleanKey,
-        email: options.email,
-        amount: Math.round(options.amount), // in pesewas
-        currency: options.currency || "GHS",
-        ref: options.ref,
-        firstname: options.firstname,
-        lastname: options.lastname,
-        phone: options.phone,
-        channels: options.channels || ["mobile_money", "card"],
-        metadata: options.metadata,
+        ...payload,
         callback: handleSuccess,
         onClose: handleCancel,
       });
@@ -157,35 +188,8 @@ export async function openPaystackPopup(options: OpenPaystackOptions): Promise<v
         return;
       }
     } catch (err) {
-      console.warn("Paystack V1 setup failed, trying V2 fallback:", err);
+      console.warn("Paystack V1 setup/openIframe failed:", err);
     }
-  }
-
-  // 2. Try Paystack V2 class pattern: new PaystackPop().newTransaction(...)
-  try {
-    if (typeof window.PaystackPop === "function") {
-      const paystackInstance = new window.PaystackPop();
-      if (paystackInstance && typeof paystackInstance.newTransaction === "function") {
-        paystackInstance.newTransaction({
-          key: cleanKey,
-          email: options.email,
-          amount: Math.round(options.amount),
-          currency: options.currency || "GHS",
-          ref: options.ref,
-          reference: options.ref,
-          firstname: options.firstname,
-          lastname: options.lastname,
-          phone: options.phone,
-          channels: options.channels || ["mobile_money", "card"],
-          metadata: options.metadata,
-          onSuccess: handleSuccess,
-          onCancel: handleCancel,
-        });
-        return;
-      }
-    }
-  } catch (err) {
-    console.warn("Paystack V2 newTransaction failed:", err);
   }
 
   throw new Error("Could not initialize Paystack popup. Please verify your Paystack Public Key in Staff Portal -> Financials & Payments and try again.");

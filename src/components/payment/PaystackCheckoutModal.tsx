@@ -220,7 +220,9 @@ export function PaystackCheckoutModal({
         firstname: customerName.trim().split(" ")[0] || customerName.trim(),
         lastname: customerName.trim().split(" ").slice(1).join(" ") || undefined,
         phone: customerPhone.trim(),
-        channels: channel === "card" ? ["card"] : ["mobile_money", "card"],
+        // Restrict the checkout to exactly the channel the user selected so the
+        // Mobile Money screen (phone number -> USSD prompt) is reached directly.
+        channels: channel === "card" ? ["card"] : ["mobile_money"],
         metadata: {
           custom_fields: [
             {
