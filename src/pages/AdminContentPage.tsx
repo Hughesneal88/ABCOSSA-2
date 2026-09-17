@@ -82,6 +82,7 @@ import { formatGHS, type PaymentRecord } from "@/lib/paystackClient";
 import { useSessionTimeout } from "@/hooks/useSessionTimeout";
 import { getMainSiteUrl } from "@/lib/domainRouting";
 import { isSupabaseConfigured, supabase } from "@/integrations/supabase/client";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
