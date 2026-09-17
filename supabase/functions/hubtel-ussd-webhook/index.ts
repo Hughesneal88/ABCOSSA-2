@@ -76,6 +76,19 @@ serve(async (req) => {
           .maybeSingle();
         const unitPrice = priceSetting?.value ? parseFloat(priceSetting.value) : 1.0;
 
+        // Fetch bulk voting config
+        const { data: bulkRows } = await supabase
+          .from("site_settings")
+          .select("key, value")
+          .in("key", ["bulk_voting_enabled", "bulk_voting_packages", "bulk_voting_start", "bulk_voting_end"]);
+        const bulkMap = Object.fromEntries((bulkRows || []).map((r: any) => [r.key, r.value]));
+        const bulkEnabled = bulkMap["bulk_voting_enabled"] === "true";
+        let bulkPkgs: { amount_ghs: number; votes: number }[] = [];
+        try { bulkPkgs = bulkMap["bulk_voting_packages"] ? JSON.parse(bulkMap["bulk_voting_packages"]) : []; } catch { bulkPkgs = []; }
+        const isBulkActive = bulkEnabled && bulkPkgs.length > 0
+          && (!bulkMap["bulk_voting_start"] || new Date() >= new Date(bulkMap["bulk_voting_start"]))
+          && (!bulkMap["bulk_voting_end"] || new Date() <= new Date(bulkMap["bulk_voting_end"]));
+
         return new Response(
           JSON.stringify({
             SessionId: sessionId,
@@ -105,11 +118,18 @@ serve(async (req) => {
         if (nominee) {
           // FIX: Record payment as PENDING — votes are ONLY credited when payment is confirmed
           // DO NOT increment votes here! Votes are credited via webhook callback.
+          // Calculate effective price (bulk package if active, otherwise standard)
+          let effectiveAmount = voteCount * unitPrice;
+          if (isBulkActive) {
+            const match = bulkPkgs.find(p => p.votes === voteCount);
+            if (match) effectiveAmount = match.amount_ghs;
+          }
+
           const trxRef = `hubtel_ussd_${sessionId}_${Date.now()}`;
           await supabase.from("payments").insert({
             client_reference: trxRef,
             transaction_id: `hubtel_${Date.now()}`,
-            amount: voteCount * 1.0,
+            amount: effectiveAmount,
             currency: "GHS",
             customer_name: `USSD Voter (${mobile})`,
             customer_email: "ussd-voting@abcossa.org",

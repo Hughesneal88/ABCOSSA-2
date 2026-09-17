@@ -536,6 +536,31 @@ serve(async (req) => {
     const rawPrice = priceRow?.value ? parseFloat(String(priceRow.value)) : 1.0;
     const votePrice = isNaN(rawPrice) || rawPrice <= 0 ? 1.0 : rawPrice;
 
+    // Fetch bulk voting config
+    const { data: bulkRows } = await supabase
+      .from("site_settings")
+      .select("key, value")
+      .in("key", ["bulk_voting_enabled", "bulk_voting_packages", "bulk_voting_start", "bulk_voting_end"]);
+    const bulkMap = Object.fromEntries((bulkRows || []).map((r: any) => [r.key, r.value]));
+    const bulkEnabled = bulkMap["bulk_voting_enabled"] === "true";
+    let bulkPackages: { amount_ghs: number; votes: number }[] = [];
+    try { bulkPackages = bulkMap["bulk_voting_packages"] ? JSON.parse(bulkMap["bulk_voting_packages"]) : []; } catch { bulkPackages = []; }
+    const bulkStart = bulkMap["bulk_voting_start"] || null;
+    const bulkEnd = bulkMap["bulk_voting_end"] || null;
+    const now = new Date();
+    const isBulkActive = bulkEnabled && bulkPackages.length > 0
+      && (!bulkStart || now >= new Date(bulkStart))
+      && (!bulkEnd || now <= new Date(bulkEnd));
+
+    /** Get effective price for a given vote count (bulk package if active, otherwise standard) */
+    const getEffectivePrice = (votes: number): { total: number; perVote: number; isBulk: boolean } => {
+      if (isBulkActive) {
+        const match = bulkPackages.find(p => p.votes === votes);
+        if (match) return { total: match.amount_ghs, perVote: match.amount_ghs / match.votes, isBulk: true };
+      }
+      return { total: votes * votePrice, perVote: votePrice, isBulk: false };
+    };
+
     // =========================================================================
     // A. Payment Callback / Webhook Notification from Arkesel
     // =========================================================================
@@ -735,7 +760,8 @@ serve(async (req) => {
             );
           } else {
             const voteCount = Math.max(1, parseInt(qtyStr, 10) || 1);
-            const totalAmount = voteCount * votePrice;
+            const pricing = getEffectivePrice(voteCount);
+            const totalAmount = pricing.total;
 
             const userPhone = phoneInfo.local || "";
             const netInfo = detectNetworkFromPhone(userPhone);
@@ -983,7 +1009,8 @@ serve(async (req) => {
         );
       }
 
-      const totalAmount = voteCount * votePrice;
+      const pricing = getEffectivePrice(voteCount);
+      const totalAmount = pricing.total;
       const nomineeName = sessionState?.nominee_name || "Nominee";
       const nomineeCode = sessionState?.candidate_code || "";
       const userPhone = phoneInfo.local || sessionState?.wallet_phone || "";
@@ -1016,7 +1043,8 @@ serve(async (req) => {
     if (currentStep === "ENTER_PHONE") {
       if (userInput === "00") {
         const voteCount = sessionState?.quantity || 1;
-        const totalAmount = voteCount * votePrice;
+        const pricing = getEffectivePrice(voteCount);
+        const totalAmount = pricing.total;
         const nomineeName = sessionState?.nominee_name || "Nominee";
         const nomineeCode = sessionState?.candidate_code || "";
         const userPhone = phoneInfo.local || sessionState?.wallet_phone || "";
@@ -1055,7 +1083,8 @@ serve(async (req) => {
       const walletPhone = normalizedInput.local;
       const netInfo = detectNetworkFromPhone(walletPhone);
       const voteCount = sessionState?.quantity || 1;
-      const totalAmount = voteCount * votePrice;
+      const pricing = getEffectivePrice(voteCount);
+      const totalAmount = pricing.total;
       const nomineeName = sessionState?.nominee_name || "Nominee";
       const code = sessionState?.candidate_code || "";
 
@@ -1110,7 +1139,8 @@ serve(async (req) => {
 
       if (userInput === "1") {
         const voteCount = sessionState?.quantity || 1;
-        const totalAmount = voteCount * votePrice;
+        const pricing = getEffectivePrice(voteCount);
+        const totalAmount = pricing.total;
         const nomineeId = sessionState?.nominee_id;
         const candidateCode = sessionState?.candidate_code || "";
         const nomineeName = sessionState?.nominee_name || "Nominee";
@@ -1244,7 +1274,8 @@ serve(async (req) => {
       const otp = userInput.trim();
       const ref = sessionState?.reference || "";
       const voteCount = sessionState?.quantity || 1;
-      const totalAmount = voteCount * votePrice;
+      const pricing = getEffectivePrice(voteCount);
+      const totalAmount = pricing.total;
       const nomineeName = sessionState?.nominee_name || "Nominee";
 
       // Fetch Paystack Secret Key

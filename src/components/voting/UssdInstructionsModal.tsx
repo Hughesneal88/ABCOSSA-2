@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { useUssdSettings } from "@/hooks/useNominees";
+import { useBulkVoting, getSortedBulkPackages } from "@/hooks/useBulkVoting";
+import { formatGHS } from "@/lib/paystackClient";
 
 export interface UssdInstructionsModalProps {
   nomineeName?: string;
@@ -28,6 +30,9 @@ export function UssdInstructionsModal({
 }: UssdInstructionsModalProps) {
   const [copied, setCopied] = useState(false);
   const { data: ussdSettings } = useUssdSettings();
+  const { data: bulkVoting } = useBulkVoting();
+  const isBulkActive = bulkVoting?.isCurrentlyActive ?? false;
+  const sortedBulkPackages = getSortedBulkPackages(bulkVoting?.packages || []);
 
   const provider = ussdSettings?.provider || "arkesel";
   const providerLabel =
@@ -165,6 +170,26 @@ export function UssdInstructionsModal({
               </li>
             </ol>
           </div>
+
+          {/* Bulk Voting Info */}
+          {isBulkActive && sortedBulkPackages.length > 0 && (
+            <div className="p-3 rounded-xl bg-violet-500/10 border border-violet-500/20 space-y-2">
+              <span className="text-[11px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wider block">
+                Bulk Voting Packages Active
+              </span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {sortedBulkPackages.map((pkg, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-1.5 rounded-lg bg-background/60 border border-border/40 text-[11px]">
+                    <span className="font-semibold text-foreground">{pkg.votes} votes</span>
+                    <span className="font-bold text-violet-600 dark:text-violet-400">{formatGHS(pkg.amount_ghs)}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Enter the exact vote count matching a package to get the special price.
+              </p>
+            </div>
+          )}
 
           {/* Network Badges */}
           <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[11px] text-muted-foreground">

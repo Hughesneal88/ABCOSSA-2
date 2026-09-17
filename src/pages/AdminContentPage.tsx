@@ -37,6 +37,7 @@ import {
   Upload,
   Camera,
   User,
+  Package,
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
 import {
@@ -51,6 +52,11 @@ import {
   ensureDinnerAwardsData,
   useRecalculateNomineeVotes,
 } from "@/hooks/useNominees";
+import {
+  useBulkVoting,
+  useUpdateBulkVoting,
+  type BulkVotingPackage,
+} from "@/hooks/useBulkVoting";
 import {
   usePayments,
   usePaystackSettings,
@@ -3203,6 +3209,15 @@ function NomineesAdminPanel() {
   const [votePriceInput, setVotePriceInput] = useState<number>(1.0);
   const [votePriceInitialized, setVotePriceInitialized] = useState(false);
 
+  // Bulk voting management
+  const { data: bulkVotingConfig } = useBulkVoting();
+  const updateBulkVotingMutation = useUpdateBulkVoting();
+  const [bulkEnabled, setBulkEnabled] = useState(false);
+  const [bulkPackages, setBulkPackages] = useState<BulkVotingPackage[]>([]);
+  const [bulkStartTime, setBulkStartTime] = useState("");
+  const [bulkEndTime, setBulkEndTime] = useState("");
+  const [bulkInitialized, setBulkInitialized] = useState(false);
+
   // USSD & Gateway Settings
   const { data: ussdSettings } = useUssdSettings();
   const updateUssdMutation = useUpdateUssdSettings();
@@ -3220,6 +3235,16 @@ function NomineesAdminPanel() {
       setVotePriceInitialized(true);
     }
   }, [currentVotePrice, votePriceInitialized]);
+
+  useEffect(() => {
+    if (bulkVotingConfig && !bulkInitialized) {
+      setBulkEnabled(bulkVotingConfig.enabled);
+      setBulkPackages(bulkVotingConfig.packages);
+      setBulkStartTime(bulkVotingConfig.start_time || "");
+      setBulkEndTime(bulkVotingConfig.end_time || "");
+      setBulkInitialized(true);
+    }
+  }, [bulkVotingConfig, bulkInitialized]);
 
   useEffect(() => {
     if (ussdSettings && !ussdInitialized) {
@@ -3520,6 +3545,56 @@ function NomineesAdminPanel() {
         toast.error(err instanceof Error ? err.message : "Failed to update vote price");
       },
     });
+  };
+
+  const handleSaveBulkVoting = () => {
+    // Validate packages
+    const valid = bulkPackages.filter((p) => p.amount_ghs > 0 && p.votes > 0);
+    if (bulkEnabled && valid.length === 0) {
+      toast.error("Add at least one bulk voting package before enabling.");
+      return;
+    }
+    updateBulkVotingMutation.mutate(
+      {
+        enabled: bulkEnabled,
+        packages: valid,
+        start_time: bulkStartTime || null,
+        end_time: bulkEndTime || null,
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            bulkEnabled
+              ? `Bulk voting enabled with ${valid.length} package(s)!`
+              : "Bulk voting disabled."
+          );
+        },
+        onError: (err) => {
+          toast.error(err instanceof Error ? err.message : "Failed to save bulk voting config");
+        },
+      }
+    );
+  };
+
+  const addBulkPackage = () => {
+    setBulkPackages([...bulkPackages, { amount_ghs: 0, votes: 0, label: "" }]);
+  };
+
+  const updateBulkPackage = (index: number, field: keyof BulkVotingPackage, value: number | string) => {
+    const updated = [...bulkPackages];
+    updated[index] = { ...updated[index], [field]: value };
+    // Auto-generate label
+    if (field === "amount_ghs" || field === "votes") {
+      const pkg = updated[index];
+      if (pkg.amount_ghs > 0 && pkg.votes > 0) {
+        updated[index].label = `${pkg.amount_ghs} Cedis = ${pkg.votes} Votes`;
+      }
+    }
+    setBulkPackages(updated);
+  };
+
+  const removeBulkPackage = (index: number) => {
+    setBulkPackages(bulkPackages.filter((_, i) => i !== index));
   };
 
   const handleSaveUssdSettings = (e: React.FormEvent) => {
@@ -4006,6 +4081,135 @@ function NomineesAdminPanel() {
             Save Vote Price
           </Button>
         </form>
+      </section>
+
+      {/* 0a. Bulk Voting Configuration Card */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Package className="w-5 h-5 text-violet-500" />
+            <div>
+              <h3 className="text-lg font-bold text-foreground">Bulk Voting Packages</h3>
+              <p className="text-xs text-muted-foreground">
+                Set custom vote bundles at special prices (e.g. 10 GHS = 12 votes). When active, these replace the standard per-vote pricing.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {bulkVotingConfig?.isCurrentlyActive && (
+              <Badge className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
+                ACTIVE NOW
+              </Badge>
+            )}
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={bulkEnabled}
+                onChange={(e) => setBulkEnabled(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-muted peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+            </label>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label className="text-xs font-semibold">Start Time (optional)</Label>
+            <Input
+              type="datetime-local"
+              value={bulkStartTime}
+              onChange={(e) => setBulkStartTime(e.target.value)}
+              className="mt-1 text-xs"
+            />
+            <span className="text-[10px] text-muted-foreground mt-0.5 block">
+              Leave empty to start immediately when enabled.
+            </span>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold">End Time (optional)</Label>
+            <Input
+              type="datetime-local"
+              value={bulkEndTime}
+              onChange={(e) => setBulkEndTime(e.target.value)}
+              className="mt-1 text-xs"
+            />
+            <span className="text-[10px] text-muted-foreground mt-0.5 block">
+              Leave empty for no end time.
+            </span>
+          </div>
+        </div>
+
+        {/* Packages list */}
+        <div className="space-y-3">
+          <Label className="text-xs font-semibold">Packages</Label>
+          {bulkPackages.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">
+              No packages yet. Add a package below.
+            </p>
+          )}
+          {bulkPackages.map((pkg, idx) => (
+            <div key={idx} className="flex items-center gap-3 p-3 rounded-xl bg-muted/40 border border-border/40">
+              <div className="flex-1 grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">Amount (GHS)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={pkg.amount_ghs || ""}
+                    onChange={(e) => updateBulkPackage(idx, "amount_ghs", Number(e.target.value))}
+                    className="mt-0.5 h-8 text-xs font-bold"
+                    placeholder="e.g. 10"
+                  />
+                </div>
+                <div>
+                  <Label className="text-[10px] text-muted-foreground">Votes Received</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={pkg.votes || ""}
+                    onChange={(e) => updateBulkPackage(idx, "votes", Number(e.target.value))}
+                    className="mt-0.8 h-8 text-xs font-bold"
+                    placeholder="e.g. 12"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {pkg.amount_ghs > 0 && pkg.votes > 0 && (
+                  <Badge variant="outline" className="text-[10px] font-mono">
+                    {formatGHS(pkg.amount_ghs)} = {pkg.votes} votes
+                  </Badge>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => removeBulkPackage(idx)}
+                  className="h-8 w-8 text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button type="button" variant="outline" size="sm" onClick={addBulkPackage} className="text-xs font-semibold gap-1.5">
+            <Award className="w-3.5 h-3.5" /> Add Package
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            onClick={handleSaveBulkVoting}
+            disabled={updateBulkVotingMutation.isPending}
+            className="text-xs font-semibold gap-1.5"
+          >
+            {updateBulkVotingMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Save Bulk Voting
+          </Button>
+        </div>
       </section>
 
       {/* 0b. USSD Voting Configuration Card */}

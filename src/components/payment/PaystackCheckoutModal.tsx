@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import type { BulkVotingPackage } from "@/hooks/useBulkVoting";
 import {
   ShieldCheck,
   Loader2,
@@ -53,6 +54,8 @@ export interface PaystackCheckoutModalProps {
   trigger?: React.ReactNode;
   onSuccess?: (details?: { votesCount?: number; reference?: string; verified?: boolean }) => void;
   metadata?: Record<string, unknown>;
+  bulkPackages?: BulkVotingPackage[];
+  isBulkActive?: boolean;
 }
 
 export function PaystackCheckoutModal({
@@ -63,10 +66,13 @@ export function PaystackCheckoutModal({
   trigger,
   onSuccess,
   metadata = {},
+  bulkPackages = [],
+  isBulkActive = false,
 }: PaystackCheckoutModalProps) {
   const [open, setOpen] = useState(false);
   const [votesCount, setVotesCount] = useState<number>(25);
   const [amount, setAmount] = useState<number>(paymentType === "voting" ? unitPrice * 25 : defaultAmount || 25);
+  const [selectedBulkPackage, setSelectedBulkPackage] = useState<BulkVotingPackage | null>(null);
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -90,14 +96,30 @@ export function PaystackCheckoutModal({
   // Recalculate amount for voting whenever votesCount or unitPrice changes
   useEffect(() => {
     if (paymentType === "voting") {
-      setAmount(Math.max(1, votesCount) * (unitPrice > 0 ? unitPrice : 1));
+      if (selectedBulkPackage) {
+        // Bulk package: fixed amount and votes
+        setAmount(selectedBulkPackage.amount_ghs);
+        setVotesCount(selectedBulkPackage.votes);
+      } else if (isBulkActive && bulkPackages.length > 0) {
+        // Bulk active but no package selected yet: default to first package
+        // Don't change — let user pick
+      } else {
+        setAmount(Math.max(1, votesCount) * (unitPrice > 0 ? unitPrice : 1));
+      }
     }
-  }, [votesCount, unitPrice, paymentType]);
+  }, [votesCount, unitPrice, paymentType, selectedBulkPackage, isBulkActive, bulkPackages.length]);
 
   const handleVoteCountChange = (count: number) => {
     const validCount = Math.max(1, Math.floor(count));
     setVotesCount(validCount);
+    setSelectedBulkPackage(null); // clear bulk selection when custom count
     setAmount(validCount * (unitPrice > 0 ? unitPrice : 1));
+  };
+
+  const handleBulkPackageSelect = (pkg: BulkVotingPackage) => {
+    setSelectedBulkPackage(pkg);
+    setVotesCount(pkg.votes);
+    setAmount(pkg.amount_ghs);
   };
 
   const handleVerifyReference = async (ref: string, pId?: string, isManualCheck = false) => {
@@ -171,6 +193,14 @@ export function PaystackCheckoutModal({
           ...metadata,
           votes_count: totalVotes,
           unit_price: unitPrice,
+          ...(selectedBulkPackage
+            ? {
+                bulk_package: true,
+                bulk_amount: selectedBulkPackage.amount_ghs,
+                bulk_votes: selectedBulkPackage.votes,
+                bulk_label: selectedBulkPackage.label,
+              }
+            : {}),
         },
       });
 
@@ -399,36 +429,90 @@ export function PaystackCheckoutModal({
           <form onSubmit={handlePay} className="space-y-4 pt-2">
             {/* If voting, show Vote Quantity selector */}
             {paymentType === "voting" ? (
-              <div className="space-y-2">
-                <Label className="text-xs font-semibold">Select Number of Votes</Label>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {[25, 50, 100, 250, 500].map((count) => (
-                    <Button
-                      key={count}
-                      type="button"
-                      variant={votesCount === count ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => handleVoteCountChange(count)}
-                      className="text-xs font-semibold h-8"
-                    >
-                      {count}
-                    </Button>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">Custom votes:</span>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={5000}
-                    value={votesCount}
-                    onChange={(e) => handleVoteCountChange(Number(e.target.value))}
-                    className="h-8 text-xs font-bold w-28"
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    ({formatGHS(unitPrice)}/vote)
-                  </span>
-                </div>
+              <div className="space-y-3">
+                {isBulkActive && bulkPackages.length > 0 ? (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <Badge className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20">
+                        Bulk Pricing Active
+                      </Badge>
+                      <Label className="text-xs font-semibold">Select a Vote Package</Label>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      {[...bulkPackages]
+                        .sort((a, b) => a.amount_ghs - b.amount_ghs)
+                        .map((pkg, idx) => (
+                          <Button
+                            key={idx}
+                            type="button"
+                            variant={selectedBulkPackage === pkg ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => handleBulkPackageSelect(pkg)}
+                            className="h-auto py-3 justify-between text-left gap-3"
+                          >
+                            <div className="flex flex-col items-start">
+                              <span className="text-sm font-bold">{pkg.label || `${formatGHS(pkg.amount_ghs)} = ${pkg.votes} votes`}</span>
+                              <span className="text-[10px] text-muted-foreground font-normal">
+                                {pkg.votes > 0 ? formatGHS(pkg.amount_ghs / pkg.votes) : ""}/vote
+                              </span>
+                            </div>
+                            {selectedBulkPackage === pkg && (
+                              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                            )}
+                          </Button>
+                        ))}
+                    </div>
+                    <div className="pt-1">
+                      <Label className="text-[10px] text-muted-foreground">Or enter custom amount:</Label>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Input
+                          type="number"
+                          min={1}
+                          max={5000}
+                          value={votesCount}
+                          onChange={(e) => handleVoteCountChange(Number(e.target.value))}
+                          className="h-8 text-xs font-bold w-28"
+                          placeholder="Votes"
+                        />
+                        <span className="text-xs text-muted-foreground">
+                          votes at {formatGHS(unitPrice)}/vote = {formatGHS(votesCount * unitPrice)}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Label className="text-xs font-semibold">Select Number of Votes</Label>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {[25, 50, 100, 250, 500].map((count) => (
+                        <Button
+                          key={count}
+                          type="button"
+                          variant={votesCount === count ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => handleVoteCountChange(count)}
+                          className="text-xs font-semibold h-8"
+                        >
+                          {count}
+                        </Button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">Custom votes:</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={5000}
+                        value={votesCount}
+                        onChange={(e) => handleVoteCountChange(Number(e.target.value))}
+                        className="h-8 text-xs font-bold w-28"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        ({formatGHS(unitPrice)}/vote)
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-2">

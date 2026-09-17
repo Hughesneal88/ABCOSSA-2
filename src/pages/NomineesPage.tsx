@@ -34,6 +34,7 @@ import {
   useUssdSettings,
   ensureDinnerAwardsData,
 } from "@/hooks/useNominees";
+import { useBulkVoting, getSortedBulkPackages } from "@/hooks/useBulkVoting";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatGHS } from "@/lib/paystackClient";
 import { PaystackCheckoutModal } from "@/components/payment/PaystackCheckoutModal";
@@ -49,6 +50,9 @@ export default function NomineesPage() {
   const { data: nominees = [], isLoading: loadingNominees } = useNominees();
   const { data: votePrice = 1.0 } = useVotePrice();
   const { data: ussdSettings } = useUssdSettings();
+  const { data: bulkVoting } = useBulkVoting();
+  const isBulkActive = bulkVoting?.isCurrentlyActive ?? false;
+  const sortedBulkPackages = getSortedBulkPackages(bulkVoting?.packages || []);
 
   const voteMutation = useVoteNominee();
   const queryClient = useQueryClient();
@@ -295,9 +299,15 @@ export default function NomineesPage() {
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
-              <span>Voting Price: {votePrice === 0 ? "Free" : `${formatGHS(votePrice)} / vote`}</span>
-            </div>
+            {isBulkActive ? (
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-600 dark:text-violet-400 text-xs font-semibold">
+                <span>Bulk Voting Active — Special Packages Available!</span>
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+                <span>Voting Price: {votePrice === 0 ? "Free" : `${formatGHS(votePrice)} / vote`}</span>
+              </div>
+            )}
 
             {ussdEnabled && (
               <UssdInstructionsModal
@@ -801,6 +811,8 @@ export default function NomineesPage() {
                             defaultAmount={votePrice}
                             unitPrice={votePrice}
                             paymentType="voting"
+                            bulkPackages={sortedBulkPackages}
+                            isBulkActive={isBulkActive}
                             metadata={{
                               nominee_id: nominee.id,
                               nominee_name: nominee.name,
@@ -814,9 +826,14 @@ export default function NomineesPage() {
                             trigger={
                               <Button
                                 size="sm"
-                                className="rounded-lg gap-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground w-full"
+                                className={`rounded-lg gap-1.5 text-xs font-semibold w-full ${
+                                  isBulkActive
+                                    ? "bg-violet-600 hover:bg-violet-700 text-white"
+                                    : "bg-primary hover:bg-primary/90 text-primary-foreground"
+                                }`}
                               >
-                                <Heart className="w-3.5 h-3.5" /> Vote ({formatGHS(votePrice)})
+                                <Heart className="w-3.5 h-3.5" />
+                                {isBulkActive ? "Bulk Vote" : `Vote (${formatGHS(votePrice)})`}
                               </Button>
                             }
                           />
