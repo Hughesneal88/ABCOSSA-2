@@ -103,11 +103,11 @@ serve(async (req) => {
           .maybeSingle();
 
         if (nominee) {
-          const newVotes = (nominee.votes_count || 0) + voteCount;
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
-
+          // FIX: Record payment as PENDING — votes are ONLY credited when payment is confirmed
+          // DO NOT increment votes here! Votes are credited via webhook callback.
+          const trxRef = `hubtel_ussd_${sessionId}_${Date.now()}`;
           await supabase.from("payments").insert({
-            client_reference: `hubtel_ussd_${sessionId}`,
+            client_reference: trxRef,
             transaction_id: `hubtel_${Date.now()}`,
             amount: voteCount * 1.0,
             currency: "GHS",
@@ -115,7 +115,7 @@ serve(async (req) => {
             customer_email: "ussd-voting@abcossa.org",
             customer_phone: mobile,
             payment_type: "voting",
-            status: "paid",
+            status: "pending",
             payment_channel: "ussd-hubtel",
             description: `Hubtel USSD Vote for ${nominee.name} (${voteCount} vote${voteCount > 1 ? "s" : ""})`,
             metadata: {
@@ -132,7 +132,7 @@ serve(async (req) => {
             JSON.stringify({
               SessionId: sessionId,
               Type: "Release",
-              Message: `Thank you! You have successfully cast ${voteCount} vote(s) for ${nominee.name}.\n\nABCOSSA 2026.`,
+              Message: `Your vote for ${nominee.name} (${voteCount} vote(s)) has been submitted. Payment is being processed.`,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
@@ -214,20 +214,8 @@ serve(async (req) => {
       );
     }
 
-    // Increment votes count
-    const newVotes = (nominee.votes_count || 0) + votesToAdd;
-    const { error: updateErr } = await supabase
-      .from("nominees")
-      .update({ votes_count: newVotes })
-      .eq("id", nominee.id);
-
-    if (updateErr) {
-      console.error("Failed to update nominee votes count:", updateErr);
-      throw updateErr;
-    }
-
-    // Record payment entry in payments table
-    await supabase.from("payments").insert({
+    // FIX: Record payment entry and use atomic RPC to credit votes
+    const { data: insertedPayment } = await supabase.from("payments").insert({
       client_reference: transactionRef,
       transaction_id: transactionRef,
       amount: amountPaid,
@@ -247,14 +235,34 @@ serve(async (req) => {
         gateway: "hubtel",
         raw_payload: body,
       },
-    });
+    }).select("id").maybeSingle();
+
+    // Use atomic RPC to credit votes — prevents double-crediting
+    if (insertedPayment?.id) {
+      const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+        p_payment_id: insertedPayment.id,
+        p_nominee_id: nominee.id,
+        p_votes_count: votesToAdd,
+      });
+      if (newCount !== null) {
+        console.log(`Hubtel callback: Credited ${votesToAdd} votes to nominee ${nominee.id}. New total: ${newCount}`);
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            message: `Successfully credited ${votesToAdd} vote(s) to ${nominee.name}. New total: ${newCount}`,
+            nominee_id: nominee.id,
+            total_votes: newCount,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     return new Response(
       JSON.stringify({
         status: "success",
-        message: `Successfully credited ${votesToAdd} vote(s) to ${nominee.name}. New total: ${newVotes}`,
+        message: `Vote payment recorded for ${nominee.name}. Votes will be credited upon verification.`,
         nominee_id: nominee.id,
-        total_votes: newVotes,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

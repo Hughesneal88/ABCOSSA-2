@@ -543,9 +543,7 @@ serve(async (req) => {
       payload.action === "payment" ||
       payload.event === "payment.success" ||
       (payload.status === "success" && (payload.amount || payload.transaction_id)) ||
-      Boolean(payload.nominee_code && payload.votes && !payload.sessionID);
-
-    if (isPaymentCallback) {
+      Boolean(payload.nominee_code && payload.votes && !payload.sessionID);      if (isPaymentCallback) {
       const candidateCode = String(
         payload.nominee_code ||
         payload.candidate_code ||
@@ -571,10 +569,8 @@ serve(async (req) => {
           .maybeSingle();
 
         if (nominee) {
-          const newVotes = (nominee.votes_count || 0) + votesToAdd;
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nominee.id);
-
-          await supabase.from("payments").insert({
+          // FIX: Use atomic RPC for vote crediting instead of non-atomic read-modify-write
+          const { data: insertedPayment } = await supabase.from("payments").insert({
             client_reference: transactionRef,
             transaction_id: transactionRef,
             amount: amountPaid,
@@ -594,7 +590,19 @@ serve(async (req) => {
               gateway: "arkesel",
               raw_payload: payload,
             },
-          });
+          }).select("id").maybeSingle();
+
+          // Use atomic RPC to credit votes
+          if (insertedPayment?.id) {
+            const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+              p_payment_id: insertedPayment.id,
+              p_nominee_id: nominee.id,
+              p_votes_count: votesToAdd,
+            });
+            if (newCount !== null) {
+              console.log(`Arkesel callback: Credited ${votesToAdd} votes to nominee ${nominee.id}. New total: ${newCount}`);
+            }
+          }
 
           return new Response(
             JSON.stringify({
@@ -1121,18 +1129,11 @@ serve(async (req) => {
           supabase: supabase,
         });
 
-        // 2. Record vote & payment in Supabase
-        if (nomineeId) {
-          const { data: nomRow } = await supabase
-            .from("nominees")
-            .select("votes_count")
-            .eq("id", nomineeId)
-            .maybeSingle();
-
-          const newVotes = (nomRow?.votes_count || 0) + voteCount;
-          await supabase.from("nominees").update({ votes_count: newVotes }).eq("id", nomineeId);
-        }
-
+        // 2. Record payment as PENDING — votes are ONLY credited when payment is confirmed
+        // DO NOT increment votes here! Votes are credited via:
+        //   a. Paystack webhook (charge.success) -> credit_votes_atomic()
+        //   b. Paystack verify (charge.success) -> credit_votes_atomic()
+        //   c. This USSD ENTER_OTP step (after OTP verification) -> credit_votes_atomic()
         await supabase.from("payments").insert({
           client_reference: trxRef,
           transaction_id: trxRef,
@@ -1276,22 +1277,51 @@ serve(async (req) => {
         );
       }
 
-      // Mark payment as paid in database upon OTP success
+      // Verify payment with Paystack API before crediting votes
+      let paymentVerified = false;
+      try {
+        const verifyRes = await fetch(`https://api.paystack.co/transaction/verify/${ref}`, {
+          method: "GET",
+          headers: { "Authorization": `Bearer ${secretKey}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        const verifyData = await verifyRes.json().catch(() => ({}));
+        const verifyStatus = verifyData?.data?.status || "";
+        paymentVerified = verifyStatus === "success";
+      } catch (_) {}
+
+      // Update payment status
+      const newStatus = paymentVerified ? "paid" : (otpResult.status === "pay_offline" || otpResult.status === "pending") ? "pending" : "failed";
       await supabase
         .from("payments")
-        .update({
-          status: "paid",
-          updated_at: new Date().toISOString(),
-        })
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq("client_reference", ref);
 
-      return respondUSSD(
-        `Payment Authorized!\n\n` +
-        `Your payment of ${formatGHS(totalAmount)} has been approved.\n\n` +
-        `${voteCount} vote(s) credited to ${nomineeName}!\n\n` +
-        `Thank you for voting!`,
-        false
-      );
+      // Credit votes ONLY if payment is verified as success
+      if (paymentVerified && nomineeId) {
+        const { data: paymentRow } = await supabase
+          .from("payments")
+          .select("id")
+          .eq("client_reference", ref)
+          .maybeSingle();
+
+        if (paymentRow?.id) {
+          const { data: newCount } = await supabase.rpc("credit_votes_atomic", {
+            p_payment_id: paymentRow.id,
+            p_nominee_id: nomineeId,
+            p_votes_count: voteCount,
+          });
+          if (newCount !== null) {
+            console.log(`USSD OTP: Credited ${voteCount} votes to nominee ${nomineeId}. New total: ${newCount}`);
+          }
+        }
+      }
+
+      const statusMsg = paymentVerified
+        ? `Payment Authorized!\n\nYour payment of ${formatGHS(totalAmount)} has been confirmed.\n\n${voteCount} vote(s) credited to ${nomineeName}!\n\nThank you for voting!`
+        : `Payment submitted. Your payment of ${formatGHS(totalAmount)} is being processed.\n\nVotes will be credited once confirmed by Paystack.`;
+
+      return respondUSSD(statusMsg, false);
     }
 
     // =========================================================================
