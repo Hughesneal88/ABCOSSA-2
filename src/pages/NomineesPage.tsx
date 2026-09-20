@@ -32,6 +32,7 @@ import {
   useVoteNominee,
   useVotePrice,
   useUssdSettings,
+  useVotesVisibility,
   ensureDinnerAwardsData,
 } from "@/hooks/useNominees";
 import { useBulkVoting, getSortedBulkPackages } from "@/hooks/useBulkVoting";
@@ -50,6 +51,10 @@ export default function NomineesPage() {
   const { data: nominees = [], isLoading: loadingNominees } = useNominees();
   const { data: votePrice = 1.0 } = useVotePrice();
   const { data: ussdSettings } = useUssdSettings();
+  const { data: votesVisibility } = useVotesVisibility();
+  // When the organizer hides votes, exact counts / ranks / leaderboards are
+  // suppressed on the public page. Vote crediting itself is unaffected.
+  const votesHidden = votesVisibility?.votesHidden ?? false;
   const { data: bulkVoting } = useBulkVoting();
   const isBulkActive = bulkVoting?.isCurrentlyActive ?? false;
   const sortedBulkPackages = getSortedBulkPackages(bulkVoting?.packages || []);
@@ -112,7 +117,10 @@ export default function NomineesPage() {
   }, [nominees]);
 
   // Category-specific rank map for every nominee
+  // Suppressed entirely while votes are hidden (ranks reveal standings).
   const categoryRankings = useMemo(() => {
+    if (votesHidden) return {};
+
     const grouped: Record<string, typeof nominees> = {};
     nominees.forEach((n) => {
       const key = n.category_id || "none";
@@ -146,7 +154,7 @@ export default function NomineesPage() {
     });
 
     return rankMap;
-  }, [nominees, categories]);
+  }, [nominees, categories, votesHidden]);
 
   // Category-specific leaderboards summary
   const categoryLeaderboards = useMemo(() => {
@@ -194,13 +202,18 @@ export default function NomineesPage() {
       });
     }
 
-    // 3. Sorting
+    // 3. Sorting — when votes are hidden, vote-based sorting is replaced by
+    // name order so the public cannot infer standings from list position.
     list.sort((a, b) => {
       if (sortBy === "votes_desc") {
-        return (b.votes_count || 0) - (a.votes_count || 0);
+        return votesHidden
+          ? a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+          : (b.votes_count || 0) - (a.votes_count || 0);
       }
       if (sortBy === "votes_asc") {
-        return (a.votes_count || 0) - (b.votes_count || 0);
+        return votesHidden
+          ? a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+          : (a.votes_count || 0) - (b.votes_count || 0);
       }
       if (sortBy === "name_asc") {
         return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
@@ -237,7 +250,7 @@ export default function NomineesPage() {
     });
 
     return list;
-  }, [nominees, categories, selectedCategory, searchQuery, sortBy]);
+  }, [nominees, categories, selectedCategory, searchQuery, sortBy, votesHidden]);
 
   const ussdShortcode = ussdSettings?.shortcode || "*928*667#";
   const ussdEnabled = Boolean(ussdSettings?.enabled);
@@ -413,8 +426,12 @@ export default function NomineesPage() {
                   </div>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="votes_desc">Votes: High to Low</SelectItem>
-                  <SelectItem value="votes_asc">Votes: Low to High</SelectItem>
+                  {!votesHidden && (
+                    <>
+                      <SelectItem value="votes_desc">Votes: High to Low</SelectItem>
+                      <SelectItem value="votes_asc">Votes: Low to High</SelectItem>
+                    </>
+                  )}
                   <SelectItem value="name_asc">Name: A to Z</SelectItem>
                   <SelectItem value="name_desc">Name: Z to A</SelectItem>
                   <SelectItem value="category_asc">Category: A to Z</SelectItem>
@@ -475,9 +492,13 @@ export default function NomineesPage() {
                 Sorted by:{" "}
                 <strong className="text-foreground">
                   {sortBy === "votes_desc"
-                    ? "Votes (High to Low)"
+                    ? votesHidden
+                      ? "Name (A to Z)"
+                      : "Votes (High to Low)"
                     : sortBy === "votes_asc"
-                    ? "Votes (Low to High)"
+                    ? votesHidden
+                      ? "Name (A to Z)"
+                      : "Votes (Low to High)"
                     : sortBy === "name_asc"
                     ? "Name (A to Z)"
                     : sortBy === "name_desc"
@@ -539,9 +560,11 @@ export default function NomineesPage() {
                         <Badge variant="outline" className="text-[11px] font-semibold bg-primary/5 border-primary/20 text-primary">
                           {totalNominees} {totalNominees === 1 ? "Nominee" : "Nominees"}
                         </Badge>
-                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                          {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
-                        </span>
+                        {!votesHidden && (
+                          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                            {totalVotes} {totalVotes === 1 ? "vote" : "votes"}
+                          </span>
+                        )}
                       </div>
 
                       <h3 className="text-base font-bold text-foreground group-hover:text-primary transition-colors line-clamp-2">
@@ -556,7 +579,7 @@ export default function NomineesPage() {
                     </div>
 
                     <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between text-xs">
-                      {leader ? (
+                      {leader && !votesHidden ? (
                         <div className="flex items-center gap-1.5 min-w-0">
                           <Crown className="w-4 h-4 text-amber-500 flex-shrink-0" />
                           <span className="text-[11px] text-muted-foreground">Leading:</span>
@@ -566,7 +589,7 @@ export default function NomineesPage() {
                         </div>
                       ) : (
                         <span className="text-[11px] text-muted-foreground italic">
-                          Voting open
+                          {votesHidden ? "Voting in progress" : "Voting open"}
                         </span>
                       )}
 
@@ -675,6 +698,7 @@ export default function NomineesPage() {
                             </Badge>
 
                             {/* Category-Specific Rank Badge */}
+                            {!votesHidden && (
                             <div
                               className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-md backdrop-blur-md ${
                                 catRank === 1 && hasVotes
@@ -695,6 +719,7 @@ export default function NomineesPage() {
                                 {hasVotes ? `#${catRank} in Category` : `#${catRank}`}
                               </span>
                             </div>
+                            )}
                           </div>
                         </div>
                       ) : (
@@ -722,6 +747,7 @@ export default function NomineesPage() {
                             </div>
 
                             {/* Category-Specific Rank Badge */}
+                            {!votesHidden && (
                             <div
                               className={`px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shadow-sm ${
                                 catRank === 1 && hasVotes
@@ -742,6 +768,7 @@ export default function NomineesPage() {
                                 {hasVotes ? `#${catRank} in Category` : `#${catRank}`}
                               </span>
                             </div>
+                            )}
                           </div>
                         </div>
                       )}
@@ -784,8 +811,14 @@ export default function NomineesPage() {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
                           <Heart className="w-4 h-4 text-rose-500 fill-rose-500/20" />
-                          <span className="font-bold text-foreground">{nominee.votes_count}</span>
-                          <span>{nominee.votes_count === 1 ? "Vote" : "Votes"}</span>
+                          {votesHidden ? (
+                            <span className="italic">Votes hidden</span>
+                          ) : (
+                            <>
+                              <span className="font-bold text-foreground">{nominee.votes_count}</span>
+                              <span>{nominee.votes_count === 1 ? "Vote" : "Votes"}</span>
+                            </>
+                          )}
                         </div>
                         {nominee.nominee_code && ussdEnabled && (
                           <span className="text-[11px] font-mono text-muted-foreground">

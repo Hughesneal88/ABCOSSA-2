@@ -38,11 +38,15 @@ import {
   Camera,
   User,
   Package,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
 import {
   useVotePrice,
   useUpdateVotePrice,
+  useVotesVisibility,
+  useUpdateVotesVisibility,
   useUssdSettings,
   useUpdateUssdSettings,
   useAutoGenerateNomineeCodes,
@@ -3210,6 +3214,36 @@ function NomineesAdminPanel() {
   const [votePriceInput, setVotePriceInput] = useState<number>(1.0);
   const [votePriceInitialized, setVotePriceInitialized] = useState(false);
 
+  // Vote visibility management (hide exact counts from the public page)
+  const { data: votesVisibility } = useVotesVisibility();
+  const updateVotesVisibilityMutation = useUpdateVotesVisibility();
+  const [votesHidden, setVotesHidden] = useState(false);
+  const [votesVisibilityInitialized, setVotesVisibilityInitialized] = useState(false);
+
+  useEffect(() => {
+    if (votesVisibility && !votesVisibilityInitialized) {
+      setVotesHidden(votesVisibility.votesHidden);
+      setVotesVisibilityInitialized(true);
+    }
+  }, [votesVisibility, votesVisibilityInitialized]);
+
+  const handleToggleVotesHidden = (checked: boolean) => {
+    setVotesHidden(checked);
+    updateVotesVisibilityMutation.mutate(checked, {
+      onSuccess: () => {
+        toast.success(
+          checked
+            ? "Vote counts hidden — nominees can no longer see exact totals."
+            : "Vote counts are visible to the public again."
+        );
+      },
+      onError: (err) => {
+        setVotesHidden(!checked);
+        toast.error(err instanceof Error ? err.message : "Could not update vote visibility.");
+      },
+    });
+  };
+
   // Bulk voting management
   const { data: bulkVotingConfig } = useBulkVoting();
   const updateBulkVotingMutation = useUpdateBulkVoting();
@@ -4082,6 +4116,54 @@ function NomineesAdminPanel() {
             Save Vote Price
           </Button>
         </form>
+      </section>
+
+      {/* 0b. Vote Visibility Configuration Card */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            {votesHidden ? (
+              <EyeOff className="w-5 h-5 text-amber-500" />
+            ) : (
+              <Eye className="w-5 h-5 text-emerald-500" />
+            )}
+            <div>
+              <h3 className="text-lg font-bold text-foreground">Vote Count Visibility</h3>
+              <p className="text-xs text-muted-foreground">
+                Hide exact vote counts from the public nominees page so nominees cannot see how many votes they or others have. Rankings, leaderboards, and vote sorting are hidden too.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Badge
+              className={`text-[10px] border ${
+                votesHidden
+                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                  : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+              }`}
+            >
+              {votesHidden ? "HIDDEN" : "VISIBLE"}
+            </Badge>
+            <label
+              className={`relative inline-flex items-center ${updateVotesVisibilityMutation.isPending ? "opacity-60" : "cursor-pointer"}`}
+              title={votesHidden ? "Show vote counts to the public" : "Hide vote counts from the public"}
+            >
+              <input
+                type="checkbox"
+                checked={votesHidden}
+                disabled={updateVotesVisibilityMutation.isPending}
+                onChange={(e) => handleToggleVotesHidden(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-muted peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+            </label>
+          </div>
+        </div>
+        {votesHidden && (
+          <div className="text-xs p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+            <strong>Hidden mode is on.</strong> Vote crediting is completely unaffected — votes are still counted and recorded exactly as before. The public page shows “Votes hidden” instead of numbers, and totals remain visible here in the admin portal and in exports.
+          </div>
+        )}
       </section>
 
       {/* 0a. Bulk Voting Configuration Card */}

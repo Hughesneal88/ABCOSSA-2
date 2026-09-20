@@ -136,6 +136,52 @@ export function useUpdateVotePrice() {
   });
 }
 
+/**
+ * Whether exact vote counts are hidden from the public nominees page.
+ * Only affects display: vote storage, crediting, and tallies are untouched.
+ */
+export function useVotesVisibility() {
+  return useQuery({
+    queryKey: ["votes-visibility"],
+    queryFn: async (): Promise<{ votesHidden: boolean }> => {
+      if (!supabase) return { votesHidden: false };
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "votes_hidden")
+        .maybeSingle();
+
+      if (error) throw error;
+      return { votesHidden: data?.value === "true" };
+    },
+    enabled: isSupabaseConfigured,
+  });
+}
+
+export function useUpdateVotesVisibility() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (votesHidden: boolean) => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      const { error } = await supabase
+        .from("site_settings")
+        .upsert(
+          { key: "votes_hidden", value: votesHidden ? "true" : "false" },
+          { onConflict: "key" }
+        );
+
+      if (error) throw error;
+      return votesHidden;
+    },
+    onSuccess: (votesHidden) => {
+      queryClient.setQueryData(["votes-visibility"], { votesHidden });
+      queryClient.invalidateQueries({ queryKey: ["votes-visibility"] });
+    },
+  });
+}
+
 export function useUssdSettings() {
   return useQuery({
     queryKey: ["ussd-settings"],
