@@ -40,6 +40,7 @@ import {
   Package,
   Eye,
   EyeOff,
+  Lock,
 } from "lucide-react";
 import { parsePDFNomineeFile, type ParsedNominee } from "@/lib/pdfNomineeParser";
 import {
@@ -47,6 +48,8 @@ import {
   useUpdateVotePrice,
   useVotesVisibility,
   useUpdateVotesVisibility,
+  useVotingClosed,
+  useUpdateVotingClosed,
   useUssdSettings,
   useUpdateUssdSettings,
   useAutoGenerateNomineeCodes,
@@ -3218,7 +3221,11 @@ function NomineesAdminPanel() {
   const { data: votesVisibility } = useVotesVisibility();
   const updateVotesVisibilityMutation = useUpdateVotesVisibility();
   const [votesHidden, setVotesHidden] = useState(false);
+  const [votingClosed, setVotingClosed] = useState(false);
   const [votesVisibilityInitialized, setVotesVisibilityInitialized] = useState(false);
+
+  const { data: votingClosedData } = useVotingClosed();
+  const updateVotingClosedMutation = useUpdateVotingClosed();
 
   useEffect(() => {
     if (votesVisibility && !votesVisibilityInitialized) {
@@ -3226,6 +3233,37 @@ function NomineesAdminPanel() {
       setVotesVisibilityInitialized(true);
     }
   }, [votesVisibility, votesVisibilityInitialized]);
+
+  useEffect(() => {
+    if (votingClosedData) {
+      setVotingClosed(votingClosedData.votingClosed);
+    }
+  }, [votingClosedData]);
+
+  const handleToggleVotingClosed = (checked: boolean) => {
+    if (
+      checked &&
+      !window.confirm(
+        "Close voting now?\n\nAll voting stops immediately: online voting buttons are disabled, USSD voting is rejected, and pending/unverified payments will no longer be credited votes.\n\nYou can reopen voting later and any legitimately paid votes will then be credited.\n\nClose voting?"
+      )
+    ) {
+      return;
+    }
+    setVotingClosed(checked);
+    updateVotingClosedMutation.mutate(checked, {
+      onSuccess: () => {
+        toast.success(
+          checked
+            ? "Voting is now CLOSED — all voting paths are disabled."
+            : "Voting is OPEN — all voting paths are enabled again."
+        );
+      },
+      onError: (err) => {
+        setVotingClosed(!checked);
+        toast.error(err instanceof Error ? err.message : "Could not update voting status.");
+      },
+    });
+  };
 
   const handleToggleVotesHidden = (checked: boolean) => {
     setVotesHidden(checked);
@@ -4116,6 +4154,50 @@ function NomineesAdminPanel() {
             Save Vote Price
           </Button>
         </form>
+      </section>
+
+      {/* 0a0. Close Voting Configuration Card */}
+      <section className="bg-card border border-border/60 p-6 rounded-2xl space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Lock className="w-5 h-5 text-rose-500" />
+            <div>
+              <h3 className="text-lg font-bold text-foreground">Close Voting</h3>
+              <p className="text-xs text-muted-foreground">
+                Stop all voting immediately: online buttons are disabled, USSD votes are rejected, and pending payments are no longer credited. Reopening restores voting and credits any legitimately paid votes.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Badge
+              className={`text-[10px] border ${
+                votingClosed
+                  ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20"
+                  : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+              }`}
+            >
+              {votingClosed ? "VOTING CLOSED" : "VOTING OPEN"}
+            </Badge>
+            <label
+              className={`relative inline-flex items-center ${updateVotingClosedMutation.isPending ? "opacity-60" : "cursor-pointer"}`}
+              title={votingClosed ? "Reopen voting" : "Close voting"}
+            >
+              <input
+                type="checkbox"
+                checked={votingClosed}
+                disabled={updateVotingClosedMutation.isPending}
+                onChange={(e) => handleToggleVotingClosed(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-muted peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-500"></div>
+            </label>
+          </div>
+        </div>
+        {votingClosed && (
+          <div className="text-xs p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-400">
+            <strong>Voting is closed.</strong> Payments already marked paid and credited are unaffected. Pending payments will be credited if you reopen voting before verification completes.
+          </div>
+        )}
       </section>
 
       {/* 0b. Vote Visibility Configuration Card */}

@@ -182,6 +182,53 @@ export function useUpdateVotesVisibility() {
   });
 }
 
+/**
+ * Whether the organizer has closed voting entirely.
+ * Enforced at the database level (crediting RPC + anon RLS);
+ * the UI mirrors the setting for display.
+ */
+export function useVotingClosed() {
+  return useQuery({
+    queryKey: ["voting-closed"],
+    queryFn: async (): Promise<{ votingClosed: boolean }> => {
+      if (!supabase) return { votingClosed: false };
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("value")
+        .eq("key", "voting_closed")
+        .maybeSingle();
+
+      if (error) throw error;
+      return { votingClosed: data?.value === "true" };
+    },
+    enabled: isSupabaseConfigured,
+  });
+}
+
+export function useUpdateVotingClosed() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (votingClosed: boolean) => {
+      if (!supabase) throw new Error("Supabase client is not available");
+
+      const { error } = await supabase
+        .from("site_settings")
+        .upsert(
+          { key: "voting_closed", value: votingClosed ? "true" : "false" },
+          { onConflict: "key" }
+        );
+
+      if (error) throw error;
+      return votingClosed;
+    },
+    onSuccess: (votingClosed) => {
+      queryClient.setQueryData(["voting-closed"], { votingClosed });
+      queryClient.invalidateQueries({ queryKey: ["voting-closed"] });
+    },
+  });
+}
+
 export function useUssdSettings() {
   return useQuery({
     queryKey: ["ussd-settings"],

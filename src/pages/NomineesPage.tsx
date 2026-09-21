@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Crown,
   ChevronRight,
+  Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +30,7 @@ import { toast } from "sonner";
 import {
   useAwardCategories,
   useNominees,
-  useVoteNominee,
+  useVoteNominee, useVotingClosed,
   useVotePrice,
   useUssdSettings,
   useVotesVisibility,
@@ -52,9 +53,13 @@ export default function NomineesPage() {
   const { data: votePrice = 1.0 } = useVotePrice();
   const { data: ussdSettings } = useUssdSettings();
   const { data: votesVisibility } = useVotesVisibility();
+  const { data: votingClosedData } = useVotingClosed();
   // When the organizer hides votes, exact counts / ranks / leaderboards are
   // suppressed on the public page. Vote crediting itself is unaffected.
   const votesHidden = votesVisibility?.votesHidden ?? false;
+  // When the organizer closes voting, voting buttons are disabled and a
+  // banner is shown. Also enforced at the DB level (crediting RPC + RLS).
+  const votingClosed = votingClosedData?.votingClosed ?? false;
   const { data: bulkVoting } = useBulkVoting();
   const isBulkActive = bulkVoting?.isCurrentlyActive ?? false;
   const sortedBulkPackages = getSortedBulkPackages(bulkVoting?.packages || []);
@@ -88,6 +93,10 @@ export default function NomineesPage() {
   }, [queryClient]);
 
   const handleFreeVote = (nomineeId: string, currentVotes: number) => {
+    if (votingClosed) {
+      toast.error("Voting is closed. Thank you for your support!");
+      return;
+    }
     voteMutation.mutate(
       { nomineeId, currentVotes, voteIncrement: 1 },
       {
@@ -308,11 +317,16 @@ export default function NomineesPage() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
             Discover outstanding students, researchers, and student leaders nominated for the ABCOSSA Dinner Awards.
-            Cast your votes online{ussdEnabled ? " or via USSD shortcode" : ""}.
+            Cast your votes online{ussdEnabled && !votingClosed ? " or via USSD shortcode" : ""}.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            {isBulkActive ? (
+            {votingClosed ? (
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-semibold">
+                <Lock className="w-3.5 h-3.5" />
+                <span>Voting is closed — results will be announced at the Dinner</span>
+              </div>
+            ) : isBulkActive ? (
               <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-600 dark:text-violet-400 text-xs font-semibold">
                 <span>Bulk Voting Active — Special Packages Available!</span>
               </div>
@@ -322,7 +336,7 @@ export default function NomineesPage() {
               </div>
             )}
 
-            {ussdEnabled && (
+            {ussdEnabled && !votingClosed && (
               <UssdInstructionsModal
                 trigger={
                   <button type="button" className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary hover:bg-primary/20 transition-colors text-xs font-semibold cursor-pointer">
@@ -336,7 +350,7 @@ export default function NomineesPage() {
         </div>
 
         {/* USSD Promo Banner (When USSD is Enabled) */}
-        {ussdEnabled && (
+        {ussdEnabled && !votingClosed && (
           <div className="max-w-6xl mx-auto mb-8">
             <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-primary/10 to-teal-500/10 border border-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
               <div className="flex items-center gap-3.5">
@@ -776,7 +790,7 @@ export default function NomineesPage() {
                       <CardHeader className={nominee.image_url ? "pt-4 pb-3" : "pt-3 pb-3"}>
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {nominee.nominee_code && ussdEnabled && (
+                            {nominee.nominee_code && ussdEnabled && !votingClosed && (
                               <Badge variant="outline" className="text-[11px] font-mono font-bold bg-muted border-border/60 text-foreground">
                                 Code: #{nominee.nominee_code}
                               </Badge>
@@ -820,16 +834,25 @@ export default function NomineesPage() {
                             </>
                           )}
                         </div>
-                        {nominee.nominee_code && ussdEnabled && (
+                        {nominee.nominee_code && ussdEnabled && !votingClosed && (
                           <span className="text-[11px] font-mono text-muted-foreground">
                             Dial: {ussdShortcode.replace(/#$/, "")}*{nominee.nominee_code}#
-                          </span>
+                        </span>
                         )}
                       </div>
 
-                      <div className={ussdEnabled ? "grid grid-cols-2 gap-2" : "flex flex-col"}>
+                      <div className={ussdEnabled && !votingClosed ? "grid grid-cols-2 gap-2" : "flex flex-col"}>
                         {/* Option 1: Online Vote */}
-                        {votePrice === 0 ? (
+                        {votingClosed ? (
+                          <Button
+                            size="sm"
+                            disabled
+                            className="rounded-lg gap-1.5 text-xs font-semibold w-full"
+                            title="Voting has closed"
+                          >
+                            <Lock className="w-3.5 h-3.5" /> Voting Closed
+                          </Button>
+                        ) : votePrice === 0 ? (
                           <Button
                             size="sm"
                             disabled={voteMutation.isPending}
