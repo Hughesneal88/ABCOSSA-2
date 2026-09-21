@@ -21,6 +21,8 @@ export type NomineeRow = {
   bio: string;
   image_url: string | null;
   votes_count: number;
+  /** Organizer-granted votes added outside the app; protected from recalculation. */
+  manual_votes: number;
   source_pdf_url: string | null;
   is_published: boolean;
   created_at: string;
@@ -687,11 +689,14 @@ export function useRecalculateNomineeVotes() {
         }
       });
 
-      // 5. Update any discrepancies in the nominees table
+      // 5. Update any discrepancies in the nominees table.
+      // Manual votes (organizer-granted outside the app) are protected:
+      // they are always added on top of paid votes, never wiped.
       let discrepanciesFixed = 0;
 
       for (const nominee of allNominees) {
-        const trueVoteCount = computedVotes.get(nominee.id) || 0;
+        const paidVotes = computedVotes.get(nominee.id) || 0;
+        const trueVoteCount = paidVotes + Number(nominee.manual_votes || 0);
         if (Number(nominee.votes_count || 0) !== trueVoteCount) {
           discrepanciesFixed++;
           await supabase

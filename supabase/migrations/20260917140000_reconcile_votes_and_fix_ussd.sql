@@ -40,13 +40,16 @@ BEGIN
   RAISE NOTICE 'Inflation to remove: %', inflation_count;
 END $$;
 
--- PART 2: FIX — Reset all nominee votes to 0
+-- PART 2: FIX — Reset all nominee votes to 0, then add protected
+-- manual votes (organizer-granted outside the app) so they survive
+-- reconciliation. manual_votes column added by 20260920220000.
 UPDATE nominees SET votes_count = 0;
+UPDATE nominees SET votes_count = votes_count + COALESCE(manual_votes, 0);
 
--- PART 3: REBUILD — Recalculate from ONLY paid + credited payments
--- This is the single source of truth
+-- PART 3: REBUILD — Recalculate from ONLY paid + credited payments,
+-- keeping manual votes on top. This is the single source of truth.
 UPDATE nominees n
-SET votes_count = COALESCE(sub.total_votes, 0)
+SET votes_count = COALESCE(n.manual_votes, 0) + COALESCE(sub.total_votes, 0)
 FROM (
   SELECT
     (p.metadata->>'nominee_id')::uuid AS nominee_id,
@@ -60,11 +63,23 @@ FROM (
 ) sub
 WHERE n.id = sub.nominee_id;
 
+-- Nominees with manual votes but no paid votes at all
+UPDATE nominees n
+SET votes_count = COALESCE(n.manual_votes, 0)
+WHERE NOT EXISTS (
+  SELECT 1 FROM payments p
+  WHERE p.status = 'paid'
+    AND p.payment_type = 'voting'
+    AND p.is_votes_credited = true
+    AND p.metadata->>'nominee_id' = n.id::text
+);
+
 -- PART 4: Verify the fix
 DO $$
 DECLARE
   new_total INTEGER;
   paid_total INTEGER;
+  manual_total INTEGER;
 BEGIN
   SELECT COALESCE(SUM(votes_count), 0) INTO new_total FROM nominees;
 
@@ -76,10 +91,13 @@ BEGIN
     AND is_votes_credited = true
     AND metadata->>'nominee_id' IS NOT NULL;
 
+  SELECT COALESCE(SUM(manual_votes), 0) INTO manual_total FROM nominees;
+
   RAISE NOTICE '=== AFTER RECONCILE ===';
   RAISE NOTICE 'Nominee votes total: %', new_total;
   RAISE NOTICE 'Paid+credited votes total: %', paid_total;
-  RAISE NOTICE 'Match: %', CASE WHEN new_total = paid_total THEN 'YES' ELSE 'NO - INVESTIGATE' END;
+  RAISE NOTICE 'Protected manual votes: %', manual_total;
+  RAISE NOTICE 'Match: %', CASE WHEN new_total = paid_total + manual_total THEN 'YES' ELSE 'NO - INVESTIGATE' END;
 END $$;
 
 -- PART 5: Create a view for monitoring vote accuracy
